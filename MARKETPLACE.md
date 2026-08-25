@@ -5,7 +5,8 @@
 - **Name:** Workspace Presets
 - **Repository:** `https://github.com/blakestarling/omarchy-workspace-presets`
 - **Plugin ID:** `blakestarling.workspace-presets`
-- **Category:** System / Productivity
+- **Category:** Productivity
+- **Tags:** `hyprland`, `quickshell`, `workspaces`
 - **License:** MIT
 - **Minimum Omarchy:** 4.0
 - **Preview:** `assets/marketplace-preview.png`
@@ -27,3 +28,11 @@ Loads are deliberately guarded: launchers and compatibility are validated before
 - Installation has no hooks, sudo, package installation, config editing, or files outside the XDG preset-data directory.
 - Custom launch commands are argv arrays and never pass through a shell.
 - Preset data survives plugin removal by design and can be purged with the documented non-recursive command.
+
+## Submission checklist
+
+1. Push `main` to the public repository above and create the `v1.0.0` release tag.
+2. From a clean checkout, run `omarchy plugin validate .` and the tests documented in `CONTRIBUTING.md`.
+3. Confirm `assets/marketplace-preview.png` reflects the released panel.
+4. Open the [Omarchy Plugins submission form](https://github.com/HANCORE-linux/omarchy-plugin-marketplace/issues/new?template=submit-plugin.yml).
+5. Submit the repository URL, **Productivity** category, and the tags listed above. The marketplace validates the current public commit before maintainer approval.

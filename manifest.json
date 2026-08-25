@@ -4,6 +4,7 @@
   "name": "Workspace Presets",
   "version": "1.0.0",
   "author": "Blake Starling",
+  "license": "MIT",
   "description": "Save, manage, and cold-restore complete Hyprland workspace layouts.",
   "kinds": [
     "service",
