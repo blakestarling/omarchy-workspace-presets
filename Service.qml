@@ -35,8 +35,19 @@ Item {
     enqueue(["list"], "list")
   }
 
-  onManifestChanged: initialize()
-  Component.onCompleted: initialize()
+  onManifestChanged: Qt.callLater(root.initialize)
+  Component.onCompleted: Qt.callLater(root.initialize)
+
+  // The shell injects manifest immediately after createObject(). Depending on
+  // binding evaluation order, sourceDir can become non-empty one tick after
+  // manifestChanged. Retry only during startup and stop permanently once the
+  // first command has been queued.
+  Timer {
+    interval: 100
+    repeat: true
+    running: !root.initialized
+    onTriggered: root.initialize()
+  }
 
   function enqueue(args, operation, refreshAfter) {
     var next = commandQueue.slice()
