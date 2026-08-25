@@ -323,6 +323,7 @@ class WorkspaceEngine:
                 for item in current
             ],
             "conflicts": conflicts,
+            "requiresConfirmation": bool(current or conflicts),
         }
 
     @staticmethod

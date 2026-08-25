@@ -37,6 +37,10 @@ Panel {
     editingId = ""
     confirmAction = ""
     confirmPreset = null
+    if (presetService) {
+      presetService.selectedDetails = null
+      if (presetService.pendingPreflight !== null) presetService.cancelPreflight()
+    }
     controller.hide()
   }
 
@@ -90,22 +94,33 @@ Panel {
     bar: root.bar
     open: root.opened
     centerOnBar: true
+    focusTarget: escapeKeyCatcher
     contentWidth: popup.fittedContentWidth(Style.space(620))
     contentHeight: popup.fittedContentHeight(Style.space(680))
 
-    Flickable {
-      id: scroll
+    Item {
+      id: escapeKeyCatcher
       anchors.fill: parent
-      contentWidth: width
-      contentHeight: content.implicitHeight
-      clip: true
-      boundsBehavior: Flickable.StopAtBounds
-      interactive: contentHeight > height
+      focus: true
+      Keys.priority: Keys.BeforeItem
+      Keys.onEscapePressed: function(event) {
+        root.close()
+        event.accepted = true
+      }
 
-      Column {
-        id: content
-        width: scroll.width
-        spacing: Style.space(12)
+      Flickable {
+        id: scroll
+        anchors.fill: parent
+        contentWidth: width
+        contentHeight: content.implicitHeight
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+        interactive: contentHeight > height
+
+        Column {
+          id: content
+          width: scroll.width
+          spacing: Style.space(12)
 
         Row {
           width: parent.width
@@ -673,7 +688,8 @@ Panel {
           }
         }
 
-        Item { width: 1; height: Style.space(2) }
+          Item { width: 1; height: Style.space(2) }
+        }
       }
     }
   }

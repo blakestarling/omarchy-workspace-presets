@@ -77,7 +77,7 @@ BarWidget {
       if (!root.presetService) return "service unavailable"
       root.presetService.preflight(presetId)
       root.open()
-      return "confirmation required"
+      return "preflight started"
     }
   }
 

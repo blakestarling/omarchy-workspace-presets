@@ -113,21 +113,25 @@ Item {
     statusMessage = "Load cancelled"
   }
 
-  function confirmLoad(conflictPolicy) {
-    if (!pendingPreflight || !pendingPreflight.preset || !pendingPreflight.workspace) return
-    var presetId = String(pendingPreflight.preset.id)
-    var workspaceId = String(pendingPreflight.workspace.id)
-    pendingPreflight = null
+  function enqueueConfirmedLoad(check, conflictPolicy) {
+    if (!check || !check.preset || !check.workspace) return
     enqueue(
       [
-        "load", "--id", presetId,
-        "--expected-workspace-id", workspaceId,
+        "load", "--id", String(check.preset.id),
+        "--expected-workspace-id", String(check.workspace.id),
         "--conflict-policy", String(conflictPolicy),
         "--confirmed"
       ],
       "load",
       true
     )
+  }
+
+  function confirmLoad(conflictPolicy) {
+    if (!pendingPreflight || !pendingPreflight.preset || !pendingPreflight.workspace) return
+    var check = pendingPreflight
+    pendingPreflight = null
+    enqueueConfirmedLoad(check, conflictPolicy)
   }
 
   function setDesktopLauncher(presetId, slotId, desktopId) {
@@ -188,8 +192,20 @@ Item {
     } else if (operation === "desktop-entries") {
       desktopEntries = Array.isArray(event.data) ? event.data : []
     } else if (operation === "preflight") {
-      pendingPreflight = event.data || null
-      statusMessage = "Confirm workspace replacement"
+      var check = event.data || null
+      var windowsToClose = check && Array.isArray(check.windowsToClose) ? check.windowsToClose : []
+      var conflicts = check && Array.isArray(check.conflicts) ? check.conflicts : []
+      var requiresConfirmation = check && check.requiresConfirmation !== undefined
+        ? check.requiresConfirmation === true
+        : windowsToClose.length > 0 || conflicts.length > 0
+      if (check && !requiresConfirmation) {
+        pendingPreflight = null
+        statusMessage = "Workspace is clear — loading preset"
+        enqueueConfirmedLoad(check, "launch-new")
+      } else {
+        pendingPreflight = check
+        statusMessage = "Confirm workspace replacement"
+      }
     } else {
       if (operation === "set-launcher") selectedDetails = null
       statusMessage = operation === "load" ? "Preset loaded" : "Preset updated"

@@ -44,6 +44,34 @@ class FakeHyprland:
 
 
 class EngineRestoreTests(unittest.TestCase):
+    @staticmethod
+    def _single_window_snapshot():
+        return {
+            "source": {"workarea": {}},
+            "layout": {"name": "monocle", "order": ["slot"]},
+            "windows": [{
+                "id": "slot",
+                "match": {"class": "foot", "initialClass": "foot", "title": "Terminal"},
+                "launcher": {"kind": "command", "argv": ["true"]},
+                "geometry": {"pixels": {}, "normalized": {}},
+                "state": {"floating": False},
+            }],
+            "groups": [],
+            "finalFocusSlotId": "slot",
+        }
+
+    def test_preflight_only_requires_confirmation_for_existing_windows(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = PresetStore(Path(directory) / "presets.json")
+            preset = store.save_snapshot("Safe", self._single_window_snapshot())
+            fake = FakeHyprland()
+            engine = WorkspaceEngine(store=store, hyprland=fake)
+            engine.capabilities = lambda: {"ready": True}
+
+            self.assertTrue(engine.preflight(preset["id"])["requiresConfirmation"])
+            fake.current = None
+            self.assertFalse(engine.preflight(preset["id"])["requiresConfirmation"])
+
     def test_group_capture_maps_lua_hex_stable_ids_to_slots(self):
         metadata = {
             "1800000a": {

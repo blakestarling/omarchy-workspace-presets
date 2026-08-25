@@ -2,6 +2,12 @@
 
 All notable changes to Workspace Presets are documented here.
 
+## 1.1.0 - 2026-08-25
+
+- Load immediately after preflight when the current workspace is empty and no matching windows exist elsewhere.
+- Keep confirmation when loading would close, duplicate, or move an existing window.
+- Close the panel with Escape from the main view, forms, and confirmation states.
+
 ## 1.0.1 - 2026-08-25
 
 - Keep failed load errors visible instead of clearing them with an automatic list refresh.
