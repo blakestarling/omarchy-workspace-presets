@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "blakestarling.workspace-presets",
+  "name": "Workspace Presets",
+  "version": "1.0.0",
+  "author": "Blake Starling",
+  "description": "Save, manage, and cold-restore complete Hyprland workspace layouts.",
+  "kinds": [
+    "service",
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Workspace Presets",
+    "description": "Save and restore application windows and their layout",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}

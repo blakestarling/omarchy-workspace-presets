@@ -1,0 +1,5 @@
+{
+  "layout": "monocle",
+  "order": ["first", "second", "third"],
+  "focused": "second"
+}

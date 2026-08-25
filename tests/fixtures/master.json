@@ -1,0 +1,9 @@
+{
+  "layout": "master",
+  "orientation": "left",
+  "metadata": {
+    "1": { "isMaster": true, "percMaster": 0.6, "percSize": 1.0 },
+    "2": { "isMaster": false, "percSize": 0.5 },
+    "3": { "isMaster": false, "percSize": 0.5 }
+  }
+}

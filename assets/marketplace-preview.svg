@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-labelledby="title desc">
+  <title id="title">Workspace Presets Omarchy plugin preview</title>
+  <desc id="desc">A stylized Omarchy panel listing ready and draft workspace presets</desc>
+  <rect width="1280" height="720" fill="#0b0e10"/>
+  <circle cx="155" cy="105" r="240" fill="#a55555" opacity=".09"/>
+  <circle cx="1120" cy="630" r="300" fill="#cacccc" opacity=".04"/>
+  <g transform="translate(230 62)">
+    <rect width="820" height="596" rx="28" fill="#101315" stroke="#43484b" stroke-width="2"/>
+    <text x="42" y="62" fill="#cacccc" font-family="sans-serif" font-size="31" font-weight="700">Workspace Presets</text>
+    <text x="42" y="91" fill="#707880" font-family="sans-serif" font-size="16">Cold-launch applications and rebuild the current workspace</text>
+    <rect x="42" y="120" width="736" height="88" rx="13" fill="#171b1d" stroke="#363b3e"/>
+    <text x="62" y="151" fill="#cacccc" font-family="sans-serif" font-size="17" font-weight="700">Save current workspace</text>
+    <rect x="62" y="167" width="568" height="28" rx="7" fill="#101315" stroke="#54595c"/>
+    <text x="75" y="187" fill="#707880" font-family="sans-serif" font-size="14">Preset name</text>
+    <rect x="643" y="167" width="112" height="28" rx="7" fill="#cacccc" opacity=".12" stroke="#cacccc"/>
+    <text x="680" y="187" fill="#cacccc" font-family="sans-serif" font-size="14" font-weight="700">Save</text>
+    <text x="42" y="250" fill="#cacccc" font-family="sans-serif" font-size="20" font-weight="700">Saved presets</text>
+    <g transform="translate(42 272)">
+      <rect width="736" height="112" rx="13" fill="#15191b" stroke="#363b3e"/>
+      <text x="20" y="33" fill="#cacccc" font-family="sans-serif" font-size="18" font-weight="700">Coding</text>
+      <text x="20" y="58" fill="#707880" font-family="sans-serif" font-size="14">5 windows · Ready to load</text>
+      <rect x="626" y="14" width="90" height="25" rx="13" fill="#cacccc" opacity=".10"/>
+      <text x="645" y="32" fill="#cacccc" font-family="sans-serif" font-size="13">dwindle</text>
+      <rect x="20" y="72" width="72" height="26" rx="7" fill="#cacccc" opacity=".12" stroke="#cacccc"/>
+      <text x="41" y="90" fill="#cacccc" font-family="sans-serif" font-size="13" font-weight="700">Load</text>
+      <text x="119" y="90" fill="#cacccc" font-family="sans-serif" font-size="13">Rename</text>
+      <text x="200" y="90" fill="#cacccc" font-family="sans-serif" font-size="13">Overwrite</text>
+      <text x="298" y="90" fill="#a55555" font-family="sans-serif" font-size="13">Delete</text>
+    </g>
+    <g transform="translate(42 400)">
+      <rect width="736" height="130" rx="13" fill="#15191b" stroke="#363b3e"/>
+      <text x="20" y="33" fill="#cacccc" font-family="sans-serif" font-size="18" font-weight="700">Research</text>
+      <text x="20" y="58" fill="#707880" font-family="sans-serif" font-size="14">4 windows · Updated moments ago</text>
+      <rect x="626" y="14" width="90" height="25" rx="13" fill="#cacccc" opacity=".10"/>
+      <text x="648" y="32" fill="#cacccc" font-family="sans-serif" font-size="13">master</text>
+      <text x="20" y="84" fill="#a55555" font-family="sans-serif" font-size="14">1 launcher needs setup before this preset can load</text>
+      <rect x="20" y="96" width="84" height="26" rx="7" fill="#a55555" opacity=".15" stroke="#a55555"/>
+      <text x="39" y="114" fill="#cacccc" font-family="sans-serif" font-size="13" font-weight="700">Set up</text>
+    </g>
+  </g>
+</svg>

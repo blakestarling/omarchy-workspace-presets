@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">Workspace Presets</title>
+  <desc id="desc">Three tiled windows inside a saved workspace frame</desc>
+  <rect width="256" height="256" rx="52" fill="#101315"/>
+  <rect x="38" y="42" width="180" height="154" rx="17" fill="none" stroke="#cacccc" stroke-width="12"/>
+  <path d="M128 48v142M134 119h78" fill="none" stroke="#cacccc" stroke-width="10" stroke-linecap="round"/>
+  <path d="M91 216h74" fill="none" stroke="#a55555" stroke-width="14" stroke-linecap="round"/>
+  <circle cx="128" cy="216" r="8" fill="#a55555"/>
+</svg>

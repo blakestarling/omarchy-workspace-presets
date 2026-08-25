@@ -1,0 +1,9 @@
+{
+  "layout": "scrolling",
+  "direction": "right",
+  "metadata": {
+    "1": { "columnIndex": 0, "columnWidth": 0.4, "indexInColumn": 0 },
+    "2": { "columnIndex": 1, "columnWidth": 0.6, "indexInColumn": 0 },
+    "3": { "columnIndex": 1, "columnWidth": 0.6, "indexInColumn": 1 }
+  }
+}
