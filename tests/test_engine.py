@@ -243,6 +243,35 @@ class EngineRestoreTests(unittest.TestCase):
                 {"kind": "omarchy-plugin", "pluginId": "quickshell.spotify"},
             )
 
+    def test_manual_panel_summon_is_normalized_to_typed_launcher(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = PresetStore(Path(directory) / "presets.json")
+            snapshot = self._single_window_snapshot()
+            snapshot["windows"][0]["match"] = {
+                "class": "org.quickshell", "title": "Omarchy Spotify",
+            }
+            snapshot["windows"][0]["launcher"] = {
+                "kind": "command",
+                "argv": ["omarchy-shell", "shell", "summon", "quickshell.spotify", "{}"],
+            }
+            preset = store.save_snapshot("Spotify", snapshot)
+            engine = WorkspaceEngine(store=store, hyprland=FakeHyprland())
+            panels = {
+                "quickshell.spotify": OmarchyPanelPlugin(
+                    "quickshell.spotify", "Omarchy Spotify", "/manifest.json"
+                )
+            }
+            with (
+                patch("workspace_presets.engine.scan_desktop_entries", return_value={}),
+                patch("workspace_presets.engine.scan_omarchy_panel_plugins", return_value=panels),
+            ):
+                result = engine.resolve_unresolved_launchers()
+            self.assertEqual(result["normalizedLauncherCount"], 1)
+            self.assertEqual(
+                store.get(preset["id"])["snapshot"]["windows"][0]["launcher"],
+                {"kind": "omarchy-plugin", "pluginId": "quickshell.spotify"},
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

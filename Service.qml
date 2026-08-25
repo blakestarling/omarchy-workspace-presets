@@ -246,7 +246,9 @@ Item {
       desktopEntries = Array.isArray(event.data) ? event.data : []
     } else if (operation === "resolve-launchers") {
       var repaired = event.data && Number(event.data.resolvedWindowCount) || 0
-      if (repaired > 0) statusMessage = "Resolved " + repaired + " saved launcher(s)"
+      var normalized = event.data && Number(event.data.normalizedLauncherCount) || 0
+      if (repaired + normalized > 0)
+        statusMessage = "Resolved " + (repaired + normalized) + " saved launcher(s)"
     } else if (operation === "preflight" || operation === "group-preflight") {
       var check = event.data || null
       var windowsToClose = check && Array.isArray(check.windowsToClose) ? check.windowsToClose : []
@@ -266,6 +268,7 @@ Item {
       if (operation === "set-launcher") selectedDetails = null
       if (operation === "startup-group") {
         if (event.data && event.data.launched) statusMessage = "Startup preset group loaded"
+        else statusMessage = "Ready"
       } else if (operation === "group-load") statusMessage = "Preset group loaded"
       else statusMessage = operation === "load" ? "Preset loaded" : "Preset updated"
     }

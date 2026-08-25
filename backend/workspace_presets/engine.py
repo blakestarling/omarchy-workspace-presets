@@ -344,23 +344,35 @@ class WorkspaceEngine:
         entries = scan_desktop_entries()
         panel_plugins = scan_omarchy_panel_plugins()
         resolved = 0
+        normalized = 0
         changed_presets = 0
         for summary in self.store.list_summaries():
-            if summary["unresolvedCount"] == 0:
-                continue
             preset = self.store.get(summary["id"])
             changed = False
             for slot in preset.get("snapshot", {}).get("windows", []):
-                if slot.get("launcher"):
-                    continue
                 launcher, _ = resolve_launcher(slot.get("match", {}), entries, panel_plugins)
-                if launcher:
+                current = slot.get("launcher")
+                if not current and launcher:
                     self.store.set_launcher(preset["id"], slot["id"], launcher)
                     resolved += 1
                     changed = True
+                elif (
+                    launcher and launcher.get("kind") == "omarchy-plugin"
+                    and current and current.get("kind") == "command"
+                    and current.get("argv") == [
+                        "omarchy-shell", "shell", "summon", launcher["pluginId"], "{}"
+                    ]
+                ):
+                    self.store.set_launcher(preset["id"], slot["id"], launcher)
+                    normalized += 1
+                    changed = True
             if changed:
                 changed_presets += 1
-        return {"resolvedWindowCount": resolved, "changedPresetCount": changed_presets}
+        return {
+            "resolvedWindowCount": resolved,
+            "normalizedLauncherCount": normalized,
+            "changedPresetCount": changed_presets,
+        }
 
     def preflight_group(self, group_id: str) -> dict:
         capability = self.capabilities()
