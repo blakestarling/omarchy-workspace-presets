@@ -82,8 +82,8 @@ A preset that needs launcher setup is saved as an explicit draft. It cannot be l
 ### Load
 
 1. Choose **Load** on a ready preset.
-2. If the current workspace is empty and no matching windows exist elsewhere, loading starts immediately after validation.
-3. Otherwise, review how many current windows will close. If matching windows exist on other workspaces, choose whether to launch new instances or move those existing windows. Nothing is moved silently.
+2. If the current workspace is empty, loading starts immediately after validation. Matching windows on other workspaces are left untouched and new instances are launched.
+3. Otherwise, review how many current windows will close. If matching windows exist on other workspaces, you can choose whether to launch new instances or move those existing windows. Nothing is moved silently.
 4. Confirm the replacement.
 
 Press **Escape** at any time to close the Workspace Presets panel and cancel a pending load confirmation.

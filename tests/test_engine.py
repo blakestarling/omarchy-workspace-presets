@@ -60,7 +60,7 @@ class EngineRestoreTests(unittest.TestCase):
             "finalFocusSlotId": "slot",
         }
 
-    def test_preflight_only_requires_confirmation_for_existing_windows(self):
+    def test_preflight_only_requires_confirmation_for_current_workspace_windows(self):
         with tempfile.TemporaryDirectory() as directory:
             store = PresetStore(Path(directory) / "presets.json")
             preset = store.save_snapshot("Safe", self._single_window_snapshot())
@@ -70,7 +70,19 @@ class EngineRestoreTests(unittest.TestCase):
 
             self.assertTrue(engine.preflight(preset["id"])["requiresConfirmation"])
             fake.current = None
-            self.assertFalse(engine.preflight(preset["id"])["requiresConfirmation"])
+            fake.spawned.append({
+                "address": "0x2",
+                "stableId": "2",
+                "mapped": True,
+                "workspace": {"id": 8, "name": "8"},
+                "class": "foot",
+                "initialClass": "foot",
+                "title": "Terminal",
+                "floating": False,
+            })
+            check = engine.preflight(preset["id"])
+            self.assertEqual(len(check["conflicts"]), 1)
+            self.assertFalse(check["requiresConfirmation"])
 
     def test_group_capture_maps_lua_hex_stable_ids_to_slots(self):
         metadata = {

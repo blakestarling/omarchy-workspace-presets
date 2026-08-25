@@ -323,7 +323,10 @@ class WorkspaceEngine:
                 for item in current
             ],
             "conflicts": conflicts,
-            "requiresConfirmation": bool(current or conflicts),
+            # Existing matches on other workspaces are informational only for
+            # the default launch-new policy. Confirmation is needed solely
+            # when replacing this workspace would close a window.
+            "requiresConfirmation": bool(current),
         }
 
     @staticmethod

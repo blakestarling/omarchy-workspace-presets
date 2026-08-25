@@ -2,6 +2,10 @@
 
 All notable changes to Workspace Presets are documented here.
 
+## 1.1.1 - 2026-08-25
+
+- Skip confirmation on an empty workspace even when matching windows exist elsewhere; load new instances and leave existing windows untouched.
+
 ## 1.1.0 - 2026-08-25
 
 - Load immediately after preflight when the current workspace is empty and no matching windows exist elsewhere.
