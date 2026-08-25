@@ -2,6 +2,11 @@
 
 All notable changes to Workspace Presets are documented here.
 
+## 1.0.1 - 2026-08-25
+
+- Keep failed load errors visible instead of clearing them with an automatic list refresh.
+- Expose the pending preflight and last structured result through the diagnostic IPC status.
+
 ## 1.0.0 - 2026-08-25
 
 - Initial Omarchy Quattro service, bar widget, and management panel.

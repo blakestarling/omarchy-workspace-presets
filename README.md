@@ -151,6 +151,7 @@ omarchy bar move blakestarling.workspace-presets --section right
 
 Common restore failures:
 
+- **Active workspace changed:** return to the workspace named in the confirmation and start the load again. Nothing is closed when this guard trips.
 - **Desktop entry no longer exists:** open **Set up** and select the replacement entry.
 - **No new window appeared:** the app may be single-instance or need a custom `--new-window` command. Retry and choose **Move existing**, or configure a custom argv launcher.
 - **Application did not close:** respond to its save/discard dialog, then load again.

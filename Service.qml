@@ -213,6 +213,7 @@ Item {
     }
     onExited: function(exitCode) {
       root.busy = false
+      var succeeded = exitCode === 0 && !backend.hadStructuredError
       if (exitCode !== 0 && !backend.hadStructuredError) {
         root.errorMessage = backend.stderrText || "Backend exited with status " + exitCode
         root.statusMessage = root.errorMessage
@@ -223,7 +224,10 @@ Item {
       }
       if (root.refreshAfterCurrent) {
         root.refreshAfterCurrent = false
-        root.enqueue(["list"], "list")
+        // A refresh starts a new command, which intentionally clears the
+        // current error. Only refresh after success so failed restores remain
+        // visible instead of appearing to do nothing.
+        if (succeeded) root.enqueue(["list"], "list")
       }
       Qt.callLater(root.startNext)
     }

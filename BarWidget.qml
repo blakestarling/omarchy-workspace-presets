@@ -62,6 +62,8 @@ BarWidget {
         busy: root.presetService.busy,
         currentOperation: root.presetService.currentOperation,
         queuedCommands: root.presetService.commandQueue.length,
+        pendingPreflight: root.presetService.pendingPreflight,
+        lastResult: root.presetService.lastResult,
         statusMessage: root.presetService.statusMessage,
         errorMessage: root.presetService.errorMessage
       })
