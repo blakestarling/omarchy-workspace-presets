@@ -23,6 +23,7 @@ class FakeHyprland:
         self.actions = []
 
     def version(self): return {"version": "0.56.2"}
+    def active_workspace(self): return self.active_context()["workspace"]
     def active_context(self):
         return {
             "workspace": {"id": 1, "name": "1", "tiledLayout": "monocle"},
@@ -41,6 +42,7 @@ class FakeHyprland:
     def create_group(self, *args, **kwargs): self.actions.append(("group",))
     def apply_window_state(self, window, state): self.actions.append(("state", window["stableId"]))
     def focus(self, window): self.actions.append(("focus", window["stableId"]))
+    def focus_workspace(self, workspace): self.actions.append(("focus-workspace", str(workspace)))
 
 
 class EngineRestoreTests(unittest.TestCase):
@@ -177,6 +179,30 @@ class EngineRestoreTests(unittest.TestCase):
             with self.assertRaisesRegex(Exception, "active workspace changed"):
                 engine.load(preset["id"], expected_workspace_id=9)
             self.assertNotIn(("close", "1"), fake.actions)
+
+    def test_group_preflight_validates_all_targets_and_uses_stale_guard(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = PresetStore(Path(directory) / "presets.json")
+            first = store.save_snapshot("First", self._single_window_snapshot())
+            second = store.save_snapshot("Second", self._single_window_snapshot())
+            group = store.save_group("Workday", [
+                {"presetId": first["id"], "workspace": 2},
+                {"presetId": second["id"], "workspace": 4},
+            ])
+            fake = FakeHyprland()
+            fake.current["workspace"] = {"id": 2, "name": "2"}
+            engine = WorkspaceEngine(store=store, hyprland=fake)
+            engine.capabilities = lambda: {"ready": True}
+
+            check = engine.preflight_group(group["id"])
+            self.assertEqual([item["workspace"]["id"] for item in check["targets"]], [2, 4])
+            self.assertEqual(check["windowCountToClose"], 1)
+            self.assertTrue(check["requiresConfirmation"])
+            self.assertEqual(len(check["token"]), 64)
+
+            with self.assertRaisesRegex(Exception, "changed after confirmation"):
+                engine.load_group(group["id"], expected_token="stale")
+            self.assertEqual(fake.actions, [])
 
 
 if __name__ == "__main__":

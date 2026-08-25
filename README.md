@@ -1,6 +1,6 @@
 # Workspace Presets for Omarchy
 
-Save the application windows on a Hyprland workspace as a named preset, then cold-load that preset onto the current workspace later. Workspace Presets launches missing applications, tracks the new windows, and rebuilds the saved layout instead of assuming the windows are already open.
+Save the application windows on a Hyprland workspace as a named preset, then cold-load that preset later. Combine presets into groups assigned to numbered workspaces and launch a complete multi-workspace setup in one action—or automatically once when the Hyprland session starts. Workspace Presets launches missing applications, tracks the new windows, and rebuilds the saved layout instead of assuming the windows are already open.
 
 This is a native Omarchy Quattro plugin: the bar widget and management panel run in `omarchy-shell`, while a bundled Python standard-library backend handles capture, validation, and restore orchestration. It does not install loose scripts, patch Omarchy menus, edit Hyprland configuration, run sudo, or use an install hook.
 
@@ -101,6 +101,23 @@ After the workspace is clear, the backend launches each saved slot through `uwsm
 
 Preset names are trimmed, non-empty, and case-insensitively unique.
 
+### Preset groups
+
+1. Under **Preset groups**, enter a unique group name and choose **Create group**.
+2. For each preset you want in the group, enter its numbered workspace and choose **Assign**. A group allows one preset per workspace and one assignment per preset.
+3. Choose **Launch group**. The plugin validates every preset, launcher, and target workspace before it changes anything.
+4. If all target workspaces are empty, launch begins immediately. Otherwise, one confirmation shows the total windows that will receive normal close requests.
+
+Group loads launch new application instances instead of moving matches from unrelated workspaces. Workspaces are rebuilt one at a time as part of the single guarded operation, and focus returns to the workspace that was active when the group launch began. If a group or any target workspace changes after confirmation, the operation stops before closing anything.
+
+Groups can be renamed, reassigned, and deleted without deleting their presets. A preset cannot be deleted while a group references it; remove that assignment first.
+
+### Launch a group on startup
+
+Choose **Launch on startup** on a complete group. Only one group can hold this setting, so enabling another transfers it. The plugin runs the selected group once when its service first starts in a new Hyprland session. A session-scoped guard prevents an `omarchy-shell` reload or plugin rescan from launching the group again. Enabling the setting does not immediately launch the group; it takes effect on the next Hyprland session.
+
+Startup restore is intentionally equivalent to a confirmed group launch: assigned workspaces are replaced with normal close requests and applications are never force-killed. If a launcher or preset becomes invalid, startup restore reports the error rather than partially skipping it.
+
 ## Optional shell IPC
 
 The widget exposes the standard Omarchy shell panel actions:
@@ -117,9 +134,15 @@ Starting a load over IPC still opens the panel for destructive confirmation:
 omarchy-shell blakestarling.workspace-presets load PRESET_UUID
 ```
 
+Group loads follow the same preflight and confirmation flow:
+
+```bash
+omarchy-shell blakestarling.workspace-presets loadGroup GROUP_UUID
+```
+
 ## Data and security
 
-Presets are stored as schema-versioned JSON at:
+Presets, preset groups, assignments, and the startup selection are stored as schema-versioned JSON at:
 
 ```text
 ${XDG_CONFIG_HOME:-~/.config}/omarchy-workspace-presets/presets.json
@@ -157,6 +180,8 @@ Common restore failures:
 - **Desktop entry no longer exists:** open **Set up** and select the replacement entry.
 - **No new window appeared:** the app may be single-instance or need a custom `--new-window` command. Retry and choose **Move existing**, or configure a custom argv launcher.
 - **Application did not close:** respond to its save/discard dialog, then load again.
+- **Startup group did not run after a shell reload:** this is intentional; startup groups run at most once per Hyprland session. Log out and back in to test the next-session behavior.
+- **Preset is used by a group:** remove that preset's group assignment before deleting it.
 - **Unsupported layout or special workspace:** switch the active normal workspace to one of the four supported built-in layouts before saving/loading.
 - **Floating window moved after a monitor change:** exact pixels are used only when work-area size and scale match; otherwise geometry is normalized and clamped to the current monitor.
 

@@ -16,6 +16,9 @@ Panel {
   property string editingName: ""
   property string confirmAction: ""
   property var confirmPreset: null
+  property string editingGroupId: ""
+  property string editingGroupName: ""
+  property var confirmGroup: null
   readonly property var barIdentity: hostWidget || root
   readonly property var presetService: bar?.shell?.serviceFor(moduleName)
   readonly property color foreground: bar ? bar.foreground : Color.foreground
@@ -37,6 +40,8 @@ Panel {
     editingId = ""
     confirmAction = ""
     confirmPreset = null
+    editingGroupId = ""
+    confirmGroup = null
     if (presetService) {
       presetService.selectedDetails = null
       if (presetService.pendingPreflight !== null) presetService.cancelPreflight()
@@ -45,6 +50,13 @@ Panel {
   }
 
   function toggle() { opened ? close() : openFromHotkey() }
+
+  function workspaceFor(group, presetId) {
+    var assignments = group && Array.isArray(group.assignments) ? group.assignments : []
+    for (var index = 0; index < assignments.length; index++)
+      if (assignments[index].presetId === presetId) return Number(assignments[index].workspace)
+    return 0
+  }
 
   component ActionButton: BorderSurface {
     id: action
@@ -295,7 +307,8 @@ Panel {
             anchors.margins: Style.space(10)
             spacing: Style.space(8)
             Text {
-              text: "Replace this workspace?"
+              text: root.presetService && root.presetService.pendingPreflight && root.presetService.pendingPreflight.kind === "group"
+                ? "Replace these workspaces?" : "Replace this workspace?"
               color: root.foreground
               font.family: root.fontFamily
               font.pixelSize: Style.font.subtitle
@@ -307,6 +320,11 @@ Panel {
               text: {
                 if (!root.presetService || !root.presetService.pendingPreflight) return ""
                 var check = root.presetService.pendingPreflight
+                if (check.kind === "group") {
+                  return String(check.windowCountToClose || 0) + " window(s) across "
+                    + String((check.targets || []).length) + " workspace(s) will receive normal close requests. "
+                    + "Every target was validated before this confirmation. Applications that refuse to close will never be force-killed."
+                }
                 var workspaceName = check.workspace ? String(check.workspace.name) : "current"
                 var message = (check.windowsToClose || []).length + " window(s) on workspace " + workspaceName + " will receive normal close requests."
                 if ((check.conflicts || []).length > 0)
@@ -338,6 +356,7 @@ Panel {
                 fontFamily: root.fontFamily
                 destructive: true
                 visible: root.presetService && root.presetService.pendingPreflight && (root.presetService.pendingPreflight.conflicts || []).length > 0
+                  && root.presetService.pendingPreflight.kind !== "group"
                 onClicked: root.presetService.confirmLoad("move-existing")
               }
             }
@@ -388,6 +407,50 @@ Panel {
                   else root.presetService.overwrite(root.confirmPreset.id, root.confirmPreset.name)
                   root.confirmAction = ""
                   root.confirmPreset = null
+                }
+              }
+            }
+          }
+        }
+
+        BorderSurface {
+          width: parent.width
+          visible: root.confirmGroup !== null
+          implicitHeight: groupDeleteColumn.implicitHeight + Style.space(18)
+          radius: Style.cornerRadius
+          color: Qt.rgba(Color.urgent.r, Color.urgent.g, Color.urgent.b, 0.10)
+          borderSpec: Border.flat(Color.urgent, 1)
+
+          Column {
+            id: groupDeleteColumn
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.margins: Style.space(9)
+            spacing: Style.space(8)
+            Text {
+              text: "Delete preset group ‘" + (root.confirmGroup ? root.confirmGroup.name : "") + "’? Presets will be kept."
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+              font.bold: true
+            }
+            Row {
+              spacing: Style.space(8)
+              ActionButton {
+                label: "Cancel"
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                onClicked: root.confirmGroup = null
+              }
+              ActionButton {
+                label: "Delete group"
+                destructive: true
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                onClicked: {
+                  root.presetService.deleteGroup(root.confirmGroup.id)
+                  root.confirmGroup = null
                 }
               }
             }
@@ -533,6 +596,215 @@ Panel {
                   destructive: true
                   enabled: root.presetService && !root.presetService.busy
                   onClicked: { root.confirmAction = "delete"; root.confirmPreset = presetCard.modelData }
+                }
+              }
+            }
+          }
+        }
+
+        Text {
+          text: "Preset groups"
+          color: root.foreground
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.subtitle
+          font.bold: true
+        }
+
+        BorderSurface {
+          width: parent.width
+          implicitHeight: createGroupColumn.implicitHeight + Style.space(18)
+          radius: Style.cornerRadius
+          color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.04)
+          borderSpec: Border.flat(Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.14), 1)
+
+          Column {
+            id: createGroupColumn
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.margins: Style.space(9)
+            spacing: Style.space(7)
+            Text {
+              text: "Create a group, then assign each preset to a numbered workspace."
+              color: Color.muted
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+            }
+            Row {
+              width: parent.width
+              spacing: Style.space(8)
+              TextField {
+                id: newGroupName
+                width: parent.width - createGroupButton.width - parent.spacing
+                placeholderText: "Group name"
+                foreground: root.foreground
+                accent: Color.accent
+                onAccepted: createGroupButton.clicked()
+              }
+              ActionButton {
+                id: createGroupButton
+                label: "Create group"
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                enabled: root.presetService && !root.presetService.busy && newGroupName.text.trim() !== ""
+                onClicked: {
+                  root.presetService.createGroup(newGroupName.text.trim())
+                  newGroupName.text = ""
+                }
+              }
+            }
+          }
+        }
+
+        Text {
+          width: parent.width
+          visible: root.presetService && root.presetService.presetGroups.length === 0 && !root.presetService.busy
+          text: "No preset groups yet."
+          color: Color.muted
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.body
+          horizontalAlignment: Text.AlignHCenter
+        }
+
+        Repeater {
+          model: root.presetService ? root.presetService.presetGroups : []
+
+          BorderSurface {
+            id: groupCard
+            required property var modelData
+            width: content.width
+            implicitHeight: groupColumn.implicitHeight + Style.space(20)
+            radius: Style.cornerRadius
+            color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.035)
+            borderSpec: Border.flat(
+              groupCard.modelData.launchOnStartup ? Color.accent : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.12), 1
+            )
+
+            Column {
+              id: groupColumn
+              anchors.left: parent.left
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              anchors.margins: Style.space(10)
+              spacing: Style.space(8)
+
+              Text {
+                visible: root.editingGroupId !== groupCard.modelData.id
+                text: groupCard.modelData.name + (groupCard.modelData.launchOnStartup ? " · Startup" : "")
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
+                font.bold: true
+              }
+              TextField {
+                visible: root.editingGroupId === groupCard.modelData.id
+                width: parent.width
+                text: root.editingGroupId === groupCard.modelData.id ? root.editingGroupName : ""
+                foreground: root.foreground
+                accent: Color.accent
+                onTextChanged: if (root.editingGroupId === groupCard.modelData.id) root.editingGroupName = text
+                onAccepted: {
+                  if (text.trim() !== "") root.presetService.renameGroup(groupCard.modelData.id, text.trim())
+                  root.editingGroupId = ""
+                }
+              }
+              Text {
+                text: groupCard.modelData.assignmentCount + " workspace assignment(s)"
+                  + (groupCard.modelData.loadable ? " · Ready" : " · Assign one or more ready presets")
+                color: groupCard.modelData.loadable ? Color.muted : Color.urgent
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+              Row {
+                spacing: Style.space(7)
+                ActionButton {
+                  label: "Launch group"
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                  enabled: root.presetService && !root.presetService.busy && groupCard.modelData.loadable
+                  onClicked: root.presetService.preflightGroup(groupCard.modelData.id)
+                }
+                ActionButton {
+                  label: root.editingGroupId === groupCard.modelData.id ? "Cancel rename" : "Rename"
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                  enabled: root.presetService && !root.presetService.busy
+                  onClicked: {
+                    if (root.editingGroupId === groupCard.modelData.id) root.editingGroupId = ""
+                    else { root.editingGroupId = groupCard.modelData.id; root.editingGroupName = groupCard.modelData.name }
+                  }
+                }
+                ActionButton {
+                  label: groupCard.modelData.launchOnStartup ? "Disable startup" : "Launch on startup"
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                  enabled: root.presetService && !root.presetService.busy && groupCard.modelData.loadable
+                  onClicked: root.presetService.setStartupGroup(groupCard.modelData.id, !groupCard.modelData.launchOnStartup)
+                }
+                ActionButton {
+                  label: "Delete"
+                  destructive: true
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                  enabled: root.presetService && !root.presetService.busy
+                  onClicked: root.confirmGroup = groupCard.modelData
+                }
+              }
+
+              Text {
+                text: "Assignments"
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+                font.bold: true
+              }
+
+              Repeater {
+                model: root.presetService ? root.presetService.presets : []
+
+                Row {
+                  id: assignmentRow
+                  required property var modelData
+                  property int assignedWorkspace: root.workspaceFor(groupCard.modelData, modelData.id)
+                  width: groupColumn.width
+                  spacing: Style.space(7)
+                  Text {
+                    width: parent.width - workspaceField.width - assignButton.width - removeAssignment.width - parent.spacing * 3
+                    text: assignmentRow.modelData.name + (assignmentRow.modelData.loadable ? "" : " (not ready)")
+                    color: assignmentRow.modelData.loadable ? root.foreground : Color.urgent
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    elide: Text.ElideRight
+                  }
+                  TextField {
+                    id: workspaceField
+                    width: Style.space(72)
+                    placeholderText: "WS #"
+                    text: assignmentRow.assignedWorkspace > 0 ? String(assignmentRow.assignedWorkspace) : ""
+                    foreground: root.foreground
+                    accent: Color.accent
+                    onAccepted: assignButton.clicked()
+                  }
+                  ActionButton {
+                    id: assignButton
+                    label: assignmentRow.assignedWorkspace > 0 ? "Update" : "Assign"
+                    foreground: root.foreground
+                    fontFamily: root.fontFamily
+                    enabled: root.presetService && !root.presetService.busy && assignmentRow.modelData.loadable
+                      && /^\d+$/.test(workspaceField.text.trim()) && Number(workspaceField.text.trim()) > 0
+                    onClicked: root.presetService.assignPreset(
+                      groupCard.modelData.id, assignmentRow.modelData.id, Number(workspaceField.text.trim())
+                    )
+                  }
+                  ActionButton {
+                    id: removeAssignment
+                    label: "Remove"
+                    foreground: root.foreground
+                    fontFamily: root.fontFamily
+                    visible: assignmentRow.assignedWorkspace > 0
+                    enabled: root.presetService && !root.presetService.busy
+                    onClicked: root.presetService.unassignPreset(groupCard.modelData.id, assignmentRow.modelData.id)
+                  }
                 }
               }
             }

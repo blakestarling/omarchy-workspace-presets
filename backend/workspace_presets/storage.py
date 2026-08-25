@@ -36,7 +36,12 @@ class PresetStore:
 
     @staticmethod
     def empty() -> dict:
-        return {"schemaVersion": SCHEMA_VERSION, "presets": []}
+        return {
+            "schemaVersion": SCHEMA_VERSION,
+            "presets": [],
+            "presetGroups": [],
+            "startupGroupId": None,
+        }
 
     @contextmanager
     def _locked(self, *, exclusive: bool) -> Iterator[None]:
@@ -108,6 +113,50 @@ class PresetStore:
                 raise ValidationError("Preset ids and names must be unique")
             seen_ids.add(preset_id)
             seen_names.add(normalized)
+        # These fields were added without bumping the schema so existing v1
+        # installations remain readable and are upgraded on their next write.
+        groups = data.setdefault("presetGroups", [])
+        data.setdefault("startupGroupId", None)
+        if not isinstance(groups, list):
+            raise ValidationError("Preset data has an invalid presetGroups array")
+        preset_ids = seen_ids
+        group_ids: set[str] = set()
+        group_names: set[str] = set()
+        for group in groups:
+            if not isinstance(group, dict):
+                raise ValidationError("Every preset group must be an object")
+            group_id = group.get("id")
+            name = group.get("name")
+            if not isinstance(group_id, str) or not group_id:
+                raise ValidationError("Every preset group must have an id")
+            normalized = PresetStore.normalize_name(name)
+            if group_id in group_ids or normalized in group_names:
+                raise ValidationError("Preset group ids and names must be unique")
+            assignments = group.get("assignments")
+            if not isinstance(assignments, list):
+                raise ValidationError("Every preset group must have assignments")
+            workspaces: set[int] = set()
+            assigned_presets: set[str] = set()
+            for assignment in assignments:
+                if not isinstance(assignment, dict):
+                    raise ValidationError("Preset group assignments must be objects")
+                preset_id = assignment.get("presetId")
+                workspace = assignment.get("workspace")
+                if preset_id not in preset_ids:
+                    raise ValidationError("Preset group references a missing preset")
+                if not isinstance(workspace, int) or isinstance(workspace, bool) or workspace < 1:
+                    raise ValidationError("Group workspaces must be positive numbers")
+                if workspace in workspaces:
+                    raise ValidationError("A group can only assign one preset to each workspace")
+                if preset_id in assigned_presets:
+                    raise ValidationError("A preset can only appear once in a group")
+                workspaces.add(workspace)
+                assigned_presets.add(preset_id)
+            group_ids.add(group_id)
+            group_names.add(normalized)
+        startup_group_id = data.get("startupGroupId")
+        if startup_group_id is not None and startup_group_id not in group_ids:
+            raise ValidationError("The startup preset group does not exist")
         return data
 
     @staticmethod
@@ -147,6 +196,99 @@ class PresetStore:
             data["presets"], key=lambda item: item.get("updatedAt", ""), reverse=True
         )
         return [self.public_summary(item) for item in presets]
+
+    def list_group_summaries(self) -> list[dict]:
+        data = self.load()
+        presets = {item["id"]: self.public_summary(item) for item in data["presets"]}
+        groups = sorted(
+            data["presetGroups"], key=lambda item: item.get("updatedAt", ""), reverse=True
+        )
+        return [self.public_group_summary(item, presets, data.get("startupGroupId")) for item in groups]
+
+    @staticmethod
+    def public_group_summary(group: dict, presets: dict[str, dict], startup_group_id: str | None) -> dict:
+        assignments = []
+        for item in sorted(group.get("assignments", []), key=lambda value: value["workspace"]):
+            preset = presets.get(item["presetId"])
+            assignments.append({
+                "presetId": item["presetId"],
+                "presetName": preset["name"] if preset else "Missing preset",
+                "workspace": item["workspace"],
+                "loadable": bool(preset and preset["loadable"]),
+            })
+        return {
+            "id": group["id"],
+            "name": group["name"],
+            "createdAt": group.get("createdAt", ""),
+            "updatedAt": group.get("updatedAt", ""),
+            "assignments": assignments,
+            "assignmentCount": len(assignments),
+            "loadable": bool(assignments) and all(item["loadable"] for item in assignments),
+            "launchOnStartup": group["id"] == startup_group_id,
+        }
+
+    def get_group(self, group_id: str) -> dict:
+        data = self.load()
+        for group in data["presetGroups"]:
+            if group["id"] == group_id:
+                return copy.deepcopy(group)
+        raise ValidationError(f"Preset group {group_id!r} does not exist")
+
+    def startup_group_id(self) -> str | None:
+        return self.load().get("startupGroupId")
+
+    def save_group(self, name: str, assignments: list[dict], *, group_id: str | None = None) -> dict:
+        normalized = self.normalize_name(name)
+        with self._locked(exclusive=True):
+            data = self._read_unlocked()
+            now = utc_now()
+            if group_id:
+                target = next((g for g in data["presetGroups"] if g["id"] == group_id), None)
+                if target is None:
+                    raise ValidationError(f"Preset group {group_id!r} does not exist")
+                if any(g["id"] != group_id and self.normalize_name(g["name"]) == normalized for g in data["presetGroups"]):
+                    raise ValidationError(f"A preset group named {name!r} already exists")
+                target["name"] = name.strip()
+                target["assignments"] = copy.deepcopy(assignments)
+                target["updatedAt"] = now
+            else:
+                if any(self.normalize_name(g["name"]) == normalized for g in data["presetGroups"]):
+                    raise ValidationError(f"A preset group named {name!r} already exists")
+                target = {
+                    "id": str(uuid.uuid4()), "name": name.strip(),
+                    "createdAt": now, "updatedAt": now,
+                    "assignments": copy.deepcopy(assignments),
+                }
+                data["presetGroups"].append(target)
+            self._write_unlocked(data)
+            return copy.deepcopy(target)
+
+    def delete_group(self, group_id: str) -> dict:
+        with self._locked(exclusive=True):
+            data = self._read_unlocked()
+            target = next((g for g in data["presetGroups"] if g["id"] == group_id), None)
+            if target is None:
+                raise ValidationError(f"Preset group {group_id!r} does not exist")
+            data["presetGroups"] = [g for g in data["presetGroups"] if g["id"] != group_id]
+            if data.get("startupGroupId") == group_id:
+                data["startupGroupId"] = None
+            self._write_unlocked(data)
+            return copy.deepcopy(target)
+
+    def set_startup_group(self, group_id: str | None) -> dict | None:
+        with self._locked(exclusive=True):
+            data = self._read_unlocked()
+            target = next((g for g in data["presetGroups"] if g["id"] == group_id), None)
+            if group_id is not None and target is None:
+                raise ValidationError(f"Preset group {group_id!r} does not exist")
+            if target is not None:
+                presets = {item["id"]: self.public_summary(item) for item in data["presets"]}
+                summary = self.public_group_summary(target, presets, group_id)
+                if not summary["loadable"]:
+                    raise ValidationError("Only a complete, loadable preset group can launch on startup")
+            data["startupGroupId"] = group_id
+            self._write_unlocked(data)
+            return copy.deepcopy(target)
 
     def get(self, preset_id: str) -> dict:
         data = self.load()
@@ -218,6 +360,11 @@ class PresetStore:
             target = next((p for p in data["presets"] if p["id"] == preset_id), None)
             if target is None:
                 raise ValidationError(f"Preset {preset_id!r} does not exist")
+            used_by = [g["name"] for g in data["presetGroups"] if any(a["presetId"] == preset_id for a in g["assignments"])]
+            if used_by:
+                raise ValidationError(
+                    f"Preset {target['name']!r} is used by group(s): {', '.join(used_by)}"
+                )
             data["presets"] = [p for p in data["presets"] if p["id"] != preset_id]
             self._write_unlocked(data)
             return copy.deepcopy(target)

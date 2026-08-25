@@ -13,11 +13,11 @@
 
 ## Short description
 
-Save application windows and exact Hyprland workspace layouts as named presets, then cold-launch and rebuild them on the current workspace.
+Save exact Hyprland workspace layouts, then cold-launch individual presets or complete multi-workspace preset groups.
 
 ## Long description
 
-Workspace Presets is a native Omarchy bar widget and management panel for capturing, renaming, overwriting, deleting, and loading workspace presets. Unlike layout scripts that only move windows which are already open, it resolves every saved window to a desktop entry or explicit argv command, launches missing applications through UWSM, tracks each newly created Hyprland stable ID, and reconstructs Dwindle, Master, Scrolling, or Monocle layouts. It also restores floating geometry, groups, fullscreen/maximized, pseudotile, pinning, tags, and focus.
+Workspace Presets is a native Omarchy bar widget and management panel for capturing, renaming, overwriting, deleting, and loading workspace presets. Presets can be assembled into named groups, assigned to numbered workspaces, launched together, and optionally restored once at session startup. Unlike layout scripts that only move windows which are already open, it resolves every saved window to a desktop entry or explicit argv command, launches missing applications through UWSM, tracks each newly created Hyprland stable ID, and reconstructs Dwindle, Master, Scrolling, or Monocle layouts. It also restores floating geometry, Hyprland window groups, fullscreen/maximized, pseudotile, pinning, tags, and focus.
 
 Loads are deliberately guarded: launchers and compatibility are validated before any close request, the user confirms replacement, matching windows on other workspaces are never moved without permission, and applications are never force-killed.
 

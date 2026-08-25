@@ -63,6 +63,7 @@ BarWidget {
         currentOperation: root.presetService.currentOperation,
         queuedCommands: root.presetService.commandQueue.length,
         pendingPreflight: root.presetService.pendingPreflight,
+        presetGroupCount: root.presetService.presetGroups.length,
         lastResult: root.presetService.lastResult,
         statusMessage: root.presetService.statusMessage,
         errorMessage: root.presetService.errorMessage
@@ -78,6 +79,12 @@ BarWidget {
       root.presetService.preflight(presetId)
       root.open()
       return "preflight started"
+    }
+    function loadGroup(groupId: string): string {
+      if (!root.presetService) return "service unavailable"
+      root.presetService.preflightGroup(groupId)
+      root.open()
+      return "group preflight started"
     }
   }
 

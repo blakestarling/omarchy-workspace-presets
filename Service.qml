@@ -11,6 +11,7 @@ Item {
   readonly property string backendPath: sourceDir === "" ? "" : sourceDir + "/backend/main.py"
 
   property var presets: []
+  property var presetGroups: []
   property var capabilities: ({ ready: false, missingCommands: [] })
   property bool capabilitiesChecked: false
   property var selectedDetails: null
@@ -33,6 +34,8 @@ Item {
     initialized = true
     enqueue(["capabilities"], "capabilities")
     enqueue(["list"], "list")
+    enqueue(["groups"], "groups")
+    enqueue(["startup-group"], "startup-group")
   }
 
   onManifestChanged: Qt.callLater(root.initialize)
@@ -76,7 +79,10 @@ Item {
     backend.running = true
   }
 
-  function refresh() { enqueue(["list"], "list") }
+  function refresh() {
+    enqueue(["list"], "list")
+    enqueue(["groups"], "groups")
+  }
   function refreshCapabilities() { enqueue(["capabilities"], "capabilities") }
   function loadDetails(presetId) { enqueue(["details", "--id", String(presetId)], "details") }
   function loadDesktopEntries() {
@@ -103,6 +109,41 @@ Item {
     enqueue(["delete", "--id", String(presetId)], "delete", true)
   }
 
+  function createGroup(name) {
+    enqueue(["group-create", "--name", String(name)], "group-create", true)
+  }
+
+  function renameGroup(groupId, name) {
+    enqueue(["group-rename", "--id", String(groupId), "--name", String(name)], "group-rename", true)
+  }
+
+  function assignPreset(groupId, presetId, workspace) {
+    enqueue([
+      "group-assign", "--id", String(groupId), "--preset-id", String(presetId),
+      "--workspace", String(workspace)
+    ], "group-assign", true)
+  }
+
+  function unassignPreset(groupId, presetId) {
+    enqueue([
+      "group-unassign", "--id", String(groupId), "--preset-id", String(presetId)
+    ], "group-unassign", true)
+  }
+
+  function deleteGroup(groupId) {
+    enqueue(["group-delete", "--id", String(groupId)], "group-delete", true)
+  }
+
+  function setStartupGroup(groupId, enabled) {
+    var args = enabled ? ["group-startup", "--id", String(groupId)] : ["group-startup", "--disable"]
+    enqueue(args, "group-startup", true)
+  }
+
+  function preflightGroup(groupId) {
+    pendingPreflight = null
+    enqueue(["group-preflight", "--id", String(groupId)], "group-preflight")
+  }
+
   function preflight(presetId) {
     pendingPreflight = null
     enqueue(["preflight", "--id", String(presetId)], "preflight")
@@ -114,7 +155,15 @@ Item {
   }
 
   function enqueueConfirmedLoad(check, conflictPolicy) {
-    if (!check || !check.preset || !check.workspace) return
+    if (!check) return
+    if (check.kind === "group" && check.group) {
+      enqueue(
+        ["group-load", "--id", String(check.group.id), "--expected-token", String(check.token), "--confirmed"],
+        "group-load", true
+      )
+      return
+    }
+    if (!check.preset || !check.workspace) return
     enqueue(
       [
         "load", "--id", String(check.preset.id),
@@ -128,7 +177,7 @@ Item {
   }
 
   function confirmLoad(conflictPolicy) {
-    if (!pendingPreflight || !pendingPreflight.preset || !pendingPreflight.workspace) return
+    if (!pendingPreflight) return
     var check = pendingPreflight
     pendingPreflight = null
     enqueueConfirmedLoad(check, conflictPolicy)
@@ -182,6 +231,9 @@ Item {
     if (operation === "list") {
       presets = Array.isArray(event.data) ? event.data : []
       statusMessage = presets.length === 0 ? "No presets saved yet" : "Ready"
+    } else if (operation === "groups") {
+      presetGroups = Array.isArray(event.data) ? event.data : []
+      statusMessage = "Ready"
     } else if (operation === "capabilities") {
       capabilitiesChecked = true
       capabilities = event.data || ({ ready: false })
@@ -191,7 +243,7 @@ Item {
       statusMessage = "Choose a launcher for each unresolved window"
     } else if (operation === "desktop-entries") {
       desktopEntries = Array.isArray(event.data) ? event.data : []
-    } else if (operation === "preflight") {
+    } else if (operation === "preflight" || operation === "group-preflight") {
       var check = event.data || null
       var windowsToClose = check && Array.isArray(check.windowsToClose) ? check.windowsToClose : []
       var conflicts = check && Array.isArray(check.conflicts) ? check.conflicts : []
@@ -200,7 +252,7 @@ Item {
         : windowsToClose.length > 0 || conflicts.length > 0
       if (check && !requiresConfirmation) {
         pendingPreflight = null
-        statusMessage = "Workspace is clear — loading preset"
+        statusMessage = check.kind === "group" ? "Group workspaces are clear — loading" : "Workspace is clear — loading preset"
         enqueueConfirmedLoad(check, "launch-new")
       } else {
         pendingPreflight = check
@@ -208,7 +260,10 @@ Item {
       }
     } else {
       if (operation === "set-launcher") selectedDetails = null
-      statusMessage = operation === "load" ? "Preset loaded" : "Preset updated"
+      if (operation === "startup-group") {
+        if (event.data && event.data.launched) statusMessage = "Startup preset group loaded"
+      } else if (operation === "group-load") statusMessage = "Preset group loaded"
+      else statusMessage = operation === "load" ? "Preset loaded" : "Preset updated"
     }
     changed()
   }
@@ -243,7 +298,10 @@ Item {
         // A refresh starts a new command, which intentionally clears the
         // current error. Only refresh after success so failed restores remain
         // visible instead of appearing to do nothing.
-        if (succeeded) root.enqueue(["list"], "list")
+        if (succeeded) {
+          root.enqueue(["list"], "list")
+          root.enqueue(["groups"], "groups")
+        }
       }
       Qt.callLater(root.startNext)
     }

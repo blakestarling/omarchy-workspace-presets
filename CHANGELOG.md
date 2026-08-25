@@ -2,6 +2,14 @@
 
 All notable changes to Workspace Presets are documented here.
 
+## 1.2.0 - 2026-08-25
+
+- Add named preset groups with per-preset numbered-workspace assignments.
+- Create, rename, edit, delete, and launch groups from the native plugin panel.
+- Preflight every group target before changing any workspace and reject stale confirmations.
+- Optionally launch one selected group at session startup, guarded so shell reloads cannot launch it twice.
+- Keep presets referenced by groups safe from accidental deletion.
+
 ## 1.1.1 - 2026-08-25
 
 - Skip confirmation on an empty workspace even when matching windows exist elsewhere; load new instances and leave existing windows untouched.

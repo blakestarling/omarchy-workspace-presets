@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
 import os
 import re
 import shutil
@@ -328,6 +330,133 @@ class WorkspaceEngine:
             # when replacing this workspace would close a window.
             "requiresConfirmation": bool(current),
         }
+
+    def preflight_group(self, group_id: str) -> dict:
+        capability = self.capabilities()
+        if not capability["ready"]:
+            raise UnsupportedError("This system does not meet the plugin requirements", details=capability)
+        group = self.store.get_group(group_id)
+        summaries = {item["id"]: item for item in self.store.list_summaries()}
+        summary = PresetStore.public_group_summary(
+            group, summaries, self.store.startup_group_id()
+        )
+        if not group.get("assignments"):
+            raise ValidationError(f"Preset group {group['name']!r} has no workspace assignments")
+        if not summary["loadable"]:
+            raise ValidationError(
+                f"Preset group {group['name']!r} contains a preset that is not loadable"
+            )
+
+        entries = scan_desktop_entries()
+        all_clients = self.hypr.clients()
+        targets = []
+        preset_fingerprints = []
+        for assignment in sorted(group["assignments"], key=lambda item: item["workspace"]):
+            preset = self.store.get(assignment["presetId"])
+            preset_fingerprints.append([
+                preset["id"],
+                hashlib.sha256(
+                    json.dumps(preset, sort_keys=True, separators=(",", ":")).encode()
+                ).hexdigest(),
+            ])
+            for slot in preset["snapshot"]["windows"]:
+                self._validate_runtime_launcher(slot["launcher"], entries)
+            workspace_id = int(assignment["workspace"])
+            current = [
+                item for item in all_clients
+                if item.get("mapped", True)
+                and int(item.get("workspace", {}).get("id", -999999)) == workspace_id
+            ]
+            other_clients = [
+                item for item in all_clients
+                if int(item.get("workspace", {}).get("id", -999999)) != workspace_id
+            ]
+            conflicts = []
+            seen_addresses: set[str] = set()
+            for slot in preset["snapshot"]["windows"]:
+                matches = sorted(
+                    (
+                        (window_match_score(item, slot["match"]), item)
+                        for item in other_clients
+                        if str(item.get("address", "")) not in seen_addresses
+                    ),
+                    key=lambda item: item[0], reverse=True,
+                )
+                if matches and matches[0][0] >= 100:
+                    candidate = matches[0][1]
+                    seen_addresses.add(str(candidate.get("address", "")))
+                    conflicts.append({
+                        "slotId": slot["id"], "class": candidate.get("class", ""),
+                        "title": candidate.get("title", ""),
+                        "workspace": candidate.get("workspace", {}).get("name", ""),
+                        "stableId": str(candidate.get("stableId", "")),
+                    })
+            targets.append({
+                "preset": summaries[preset["id"]],
+                "workspace": {"id": workspace_id, "name": str(workspace_id)},
+                "windowsToClose": [
+                    {"stableId": str(item.get("stableId", "")), "class": item.get("class", ""), "title": item.get("title", "")}
+                    for item in current
+                ],
+                "conflicts": conflicts,
+            })
+        token_input = {
+            "groupId": group["id"], "updatedAt": group.get("updatedAt", ""),
+            "assignments": group["assignments"],
+            "presets": preset_fingerprints,
+            "targets": [
+                [item["workspace"]["id"], sorted(window["stableId"] for window in item["windowsToClose"])]
+                for item in targets
+            ],
+        }
+        token = hashlib.sha256(
+            json.dumps(token_input, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        return {
+            "kind": "group", "group": summary, "targets": targets,
+            "windowCountToClose": sum(len(item["windowsToClose"]) for item in targets),
+            "conflictCount": sum(len(item["conflicts"]) for item in targets),
+            "requiresConfirmation": any(item["windowsToClose"] for item in targets),
+            "token": token,
+        }
+
+    def load_group(
+        self, group_id: str, *, expected_token: str | None = None,
+        conflict_policy: str = "launch-new", close_timeout: float = 8.0,
+        launch_timeout: float = 12.0,
+    ) -> dict:
+        check = self.preflight_group(group_id)
+        if expected_token is not None and check["token"] != expected_token:
+            raise RestoreError(
+                "The group or one of its target workspaces changed after confirmation; nothing was closed"
+            )
+        original_workspace_id = int(self.hypr.active_workspace().get("id", 0))
+        results = []
+        try:
+            for target in check["targets"]:
+                workspace_id = int(target["workspace"]["id"])
+                self.progress(
+                    "group", f"Loading {target['preset']['name']} on workspace {workspace_id}",
+                    {"current": len(results) + 1, "total": len(check["targets"])},
+                )
+                self.hypr.focus_workspace(workspace_id)
+                context = self.hypr.active_context()
+                if int(context["workspace"]["id"]) != workspace_id:
+                    raise RestoreError(f"Could not activate workspace {workspace_id}")
+                results.append(self.load(
+                    target["preset"]["id"], expected_workspace_id=workspace_id,
+                    conflict_policy=conflict_policy, close_timeout=close_timeout,
+                    launch_timeout=launch_timeout,
+                ))
+        finally:
+            if original_workspace_id > 0:
+                self.hypr.focus_workspace(original_workspace_id)
+        result = {
+            "groupId": group_id, "name": check["group"]["name"],
+            "workspaceCount": len(results), "results": results,
+        }
+        self.progress("complete", f"Loaded group {check['group']['name']}", result)
+        return result
 
     @staticmethod
     def _validate_runtime_launcher(launcher: dict, entries: dict) -> None:

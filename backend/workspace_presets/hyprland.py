@@ -162,6 +162,12 @@ class Hyprland:
         selector = self.lua_string(self.selector(window))
         self.lua_dispatch(f"hl.dsp.focus({{window={selector}}})")
 
+    def focus_workspace(self, workspace: str | int) -> None:
+        value = str(workspace)
+        if not value.isdigit() or int(value) < 1:
+            raise HyprlandError("Unsafe workspace number")
+        self.lua_dispatch(f"hl.dsp.focus({{workspace={self.lua_string(value)}}})")
+
     def close(self, window: dict | str) -> None:
         selector = self.lua_string(self.selector(window))
         self.lua_dispatch(f"hl.dsp.window.close({{window={selector}}})")

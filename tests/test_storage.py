@@ -33,6 +33,8 @@ class PresetStoreTests(unittest.TestCase):
         self.assertEqual(oct(os.stat(self.path).st_mode & 0o777), "0o600")
         parsed = json.loads(self.path.read_text())
         self.assertEqual(parsed["schemaVersion"], 1)
+        self.assertEqual(parsed["presetGroups"], [])
+        self.assertIsNone(parsed["startupGroupId"])
 
     def test_names_are_case_insensitively_unique(self):
         self.store.save_snapshot("Coding", self.snapshot)
@@ -59,6 +61,36 @@ class PresetStoreTests(unittest.TestCase):
         self.assertTrue(self.store.public_summary(updated)["loadable"])
         with self.assertRaises(ValidationError):
             self.store.set_launcher(saved["id"], "slot-1", {"kind": "command", "argv": []})
+
+    def test_group_management_and_startup_selection(self):
+        preset = self.store.save_snapshot("Ready", self.snapshot)
+        self.store.set_launcher(
+            preset["id"], "slot-1", {"kind": "desktop", "desktopId": "foot.desktop"}
+        )
+        group = self.store.save_group(
+            "Workday", [{"presetId": preset["id"], "workspace": 2}]
+        )
+        self.store.set_startup_group(group["id"])
+        summary = self.store.list_group_summaries()[0]
+        self.assertTrue(summary["loadable"])
+        self.assertTrue(summary["launchOnStartup"])
+        self.assertEqual(summary["assignments"][0]["presetName"], "Ready")
+        with self.assertRaisesRegex(ValidationError, "used by group"):
+            self.store.delete(preset["id"])
+        self.store.delete_group(group["id"])
+        self.assertIsNone(self.store.startup_group_id())
+
+    def test_group_rejects_duplicate_workspace_and_incomplete_startup(self):
+        one = self.store.save_snapshot("One", self.snapshot)
+        two = self.store.save_snapshot("Two", self.snapshot)
+        with self.assertRaisesRegex(ValidationError, "one preset to each workspace"):
+            self.store.save_group("Broken", [
+                {"presetId": one["id"], "workspace": 3},
+                {"presetId": two["id"], "workspace": 3},
+            ])
+        draft = self.store.save_group("Draft group", [])
+        with self.assertRaisesRegex(ValidationError, "complete, loadable"):
+            self.store.set_startup_group(draft["id"])
 
 
 if __name__ == "__main__":
