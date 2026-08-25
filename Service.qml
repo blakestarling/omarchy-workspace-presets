@@ -114,11 +114,17 @@ Item {
   }
 
   function confirmLoad(conflictPolicy) {
-    if (!pendingPreflight || !pendingPreflight.preset) return
+    if (!pendingPreflight || !pendingPreflight.preset || !pendingPreflight.workspace) return
     var presetId = String(pendingPreflight.preset.id)
+    var workspaceId = String(pendingPreflight.workspace.id)
     pendingPreflight = null
     enqueue(
-      ["load", "--id", presetId, "--conflict-policy", String(conflictPolicy), "--confirmed"],
+      [
+        "load", "--id", presetId,
+        "--expected-workspace-id", workspaceId,
+        "--conflict-policy", String(conflictPolicy),
+        "--confirmed"
+      ],
       "load",
       true
     )

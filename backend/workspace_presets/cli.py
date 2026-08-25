@@ -54,6 +54,7 @@ def parser() -> argparse.ArgumentParser:
 
     load = commands.add_parser("load")
     load.add_argument("--id", required=True)
+    load.add_argument("--expected-workspace-id", required=True, type=int)
     load.add_argument(
         "--conflict-policy",
         choices=("launch-new", "move-existing"),
@@ -101,6 +102,7 @@ def main(argv: list[str] | None = None) -> int:
                 raise WorkspacePresetsError("Refusing to replace a workspace without --confirmed")
             result = engine.load(
                 args.id,
+                expected_workspace_id=args.expected_workspace_id,
                 conflict_policy=args.conflict_policy,
                 close_timeout=max(1.0, args.close_timeout),
                 launch_timeout=max(1.0, args.launch_timeout),

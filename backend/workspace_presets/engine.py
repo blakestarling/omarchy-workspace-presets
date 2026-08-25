@@ -343,6 +343,7 @@ class WorkspaceEngine:
         self,
         preset_id: str,
         *,
+        expected_workspace_id: int,
         conflict_policy: str = "launch-new",
         close_timeout: float = 8.0,
         launch_timeout: float = 12.0,
@@ -350,9 +351,27 @@ class WorkspaceEngine:
         if conflict_policy not in {"launch-new", "move-existing"}:
             raise ValidationError("Conflict policy must be launch-new or move-existing")
         preflight = self.preflight(preset_id)
+        preflight_workspace_id = int(preflight["workspace"]["id"])
+        if preflight_workspace_id != int(expected_workspace_id):
+            raise RestoreError(
+                "The active workspace changed after load confirmation; nothing was closed",
+                details={
+                    "expectedWorkspaceId": int(expected_workspace_id),
+                    "activeWorkspaceId": preflight_workspace_id,
+                },
+            )
         preset = self.store.get(preset_id)
         snapshot = preset["snapshot"]
         context = self.hypr.active_context()
+        active_workspace_id = int(context["workspace"]["id"])
+        if active_workspace_id != int(expected_workspace_id):
+            raise RestoreError(
+                "The active workspace changed before replacement began; nothing was closed",
+                details={
+                    "expectedWorkspaceId": int(expected_workspace_id),
+                    "activeWorkspaceId": active_workspace_id,
+                },
+            )
         workspace_name = str(context["workspace"]["name"])
         current = self.hypr.workspace_clients(int(context["workspace"]["id"]))
         self.progress("close", f"Closing {len(current)} current workspace window(s)", None)

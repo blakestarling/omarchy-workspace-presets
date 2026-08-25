@@ -44,6 +44,30 @@ class FakeHyprland:
 
 
 class EngineRestoreTests(unittest.TestCase):
+    def test_group_capture_maps_lua_hex_stable_ids_to_slots(self):
+        metadata = {
+            "1800000a": {
+                "groupMembers": ["1800000a", "1800000b"],
+                "groupCurrentIndex": 2,
+                "groupLocked": True,
+            },
+            "1800000b": {
+                "groupMembers": ["1800000a", "1800000b"],
+                "groupCurrentIndex": 2,
+                "groupLocked": True,
+            },
+        }
+        groups, membership = WorkspaceEngine._capture_groups(
+            metadata,
+            {"1800000a": "slot-a", "1800000b": "slot-b"},
+        )
+
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(groups[0]["members"], ["slot-a", "slot-b"])
+        self.assertEqual(groups[0]["activeSlotId"], "slot-b")
+        self.assertTrue(groups[0]["locked"])
+        self.assertEqual(membership["1800000a"], groups[0]["id"])
+
     def test_cold_restore_launches_a_missing_window(self):
         with tempfile.TemporaryDirectory() as directory:
             store = PresetStore(Path(directory) / "presets.json")
@@ -81,11 +105,38 @@ class EngineRestoreTests(unittest.TestCase):
                 })
 
             with patch.object(engine, "_launch", side_effect=spawn):
-                result = engine.load(preset["id"], launch_timeout=0.2)
+                result = engine.load(
+                    preset["id"], expected_workspace_id=1, launch_timeout=0.2
+                )
             self.assertEqual(result["windowCount"], 1)
             self.assertIn(("close", "1"), fake.actions)
             self.assertIn(("float", "2", True), fake.actions)
             self.assertIn(("float", "2", False), fake.actions)
+
+    def test_restore_aborts_before_close_if_workspace_changed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = PresetStore(Path(directory) / "presets.json")
+            snapshot = {
+                "source": {"workarea": {}},
+                "layout": {"name": "monocle", "order": ["slot"]},
+                "windows": [{
+                    "id": "slot",
+                    "match": {"class": "foot"},
+                    "launcher": {"kind": "command", "argv": ["true"]},
+                    "geometry": {"pixels": {}, "normalized": {}},
+                    "state": {"floating": False},
+                }],
+                "groups": [],
+                "finalFocusSlotId": "slot",
+            }
+            preset = store.save_snapshot("Guarded", snapshot)
+            fake = FakeHyprland()
+            engine = WorkspaceEngine(store=store, hyprland=fake)
+            engine.capabilities = lambda: {"ready": True}
+
+            with self.assertRaisesRegex(Exception, "active workspace changed"):
+                engine.load(preset["id"], expected_workspace_id=9)
+            self.assertNotIn(("close", "1"), fake.actions)
 
 
 if __name__ == "__main__":

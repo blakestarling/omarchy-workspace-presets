@@ -292,10 +292,11 @@ Panel {
               text: {
                 if (!root.presetService || !root.presetService.pendingPreflight) return ""
                 var check = root.presetService.pendingPreflight
-                var message = (check.windowsToClose || []).length + " current window(s) will receive normal close requests."
+                var workspaceName = check.workspace ? String(check.workspace.name) : "current"
+                var message = (check.windowsToClose || []).length + " window(s) on workspace " + workspaceName + " will receive normal close requests."
                 if ((check.conflicts || []).length > 0)
                   message += " " + check.conflicts.length + " matching window(s) already exist on other workspaces."
-                return message + " Applications that refuse to close will never be force-killed."
+                return message + " Loading aborts if the active workspace changes. Applications that refuse to close will never be force-killed."
               }
               color: root.foreground
               font.family: root.fontFamily

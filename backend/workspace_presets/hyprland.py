@@ -127,6 +127,24 @@ class Hyprland:
     def repl(self, code: str, *, check: bool = True) -> str:
         return str(self._run(["hyprctl", "repl", code], check=check))
 
+    def eval(self, code: str, *, check: bool = True) -> str:
+        return str(self._run(["hyprctl", "eval", code], check=check))
+
+    @staticmethod
+    def lua_string(value: object) -> str:
+        """Return a safely quoted UTF-8 Lua string literal."""
+        return json.dumps(str(value), ensure_ascii=False)
+
+    def lua_dispatch(self, expression: str, *, check: bool = True) -> str:
+        """Run a Hyprland 0.56 typed dispatcher and surface result-table errors."""
+        code = (
+            f"local r=hl.dispatch({expression}); "
+            "if type(r)=='table' and r.ok==false then "
+            "error('Workspace Presets dispatch failed ['..tostring(r.code)..']: '..tostring(r.error)) "
+            "end"
+        )
+        return self.repl(code, check=check)
+
     @staticmethod
     def selector(window: dict | str) -> str:
         if isinstance(window, dict):
@@ -140,61 +158,79 @@ class Hyprland:
             return f"address:{address}"
         raise HyprlandError("Window has no safe Hyprland selector")
 
-    def dispatch(self, dispatcher: str, argument: str = "", *, check: bool = True) -> str:
-        args = ["hyprctl", "dispatch", dispatcher]
-        if argument:
-            args.append(argument)
-        return str(self._run(args, check=check))
-
     def focus(self, window: dict | str) -> None:
-        self.dispatch("focuswindow", self.selector(window))
+        selector = self.lua_string(self.selector(window))
+        self.lua_dispatch(f"hl.dsp.focus({{window={selector}}})")
 
     def close(self, window: dict | str) -> None:
-        self.dispatch("closewindow", self.selector(window))
+        selector = self.lua_string(self.selector(window))
+        self.lua_dispatch(f"hl.dsp.window.close({{window={selector}}})")
 
     def set_floating(self, window: dict | str, floating: bool) -> None:
-        self.dispatch("setfloating" if floating else "settiled", self.selector(window))
+        selector = self.lua_string(self.selector(window))
+        action = "set" if floating else "unset"
+        self.lua_dispatch(
+            f"hl.dsp.window.float({{action={self.lua_string(action)},window={selector}}})"
+        )
 
     def move_to_workspace(self, window: dict | str, workspace_name: str) -> None:
-        if "," in workspace_name or not workspace_name:
+        if not workspace_name:
             raise HyprlandError("Unsafe workspace name")
-        self.dispatch("movetoworkspacesilent", f"{workspace_name},{self.selector(window)}")
+        selector = self.lua_string(self.selector(window))
+        workspace = self.lua_string(workspace_name)
+        self.lua_dispatch(
+            f"hl.dsp.window.move({{workspace={workspace},follow=false,window={selector}}})"
+        )
 
     def move_resize(self, window: dict | str, geometry: dict) -> None:
-        selector = self.selector(window)
-        self.dispatch(
-            "resizewindowpixel",
-            f"exact {int(geometry['width'])} {int(geometry['height'])},{selector}",
+        selector = self.lua_string(self.selector(window))
+        self.lua_dispatch(
+            "hl.dsp.window.resize({"
+            f"x={int(geometry['width'])},y={int(geometry['height'])},"
+            f"relative=false,window={selector}}})"
         )
-        self.dispatch(
-            "movewindowpixel",
-            f"exact {int(geometry['x'])} {int(geometry['y'])},{selector}",
+        self.lua_dispatch(
+            "hl.dsp.window.move({"
+            f"x={int(geometry['x'])},y={int(geometry['y'])},"
+            f"relative=false,window={selector}}})"
         )
 
     def layout_message(self, message: str) -> None:
-        self.dispatch("layoutmsg", message)
+        self.lua_dispatch(f"hl.dsp.layout({self.lua_string(message)})")
 
     def set_workspace_layout(self, workspace_name: str, layout: dict) -> None:
-        if "," in workspace_name or not workspace_name:
+        if not workspace_name:
             raise HyprlandError("Unsafe workspace name")
-        parts = [f"name:{workspace_name}", f"layout:{layout['name']}"]
+        layout_name = str(layout["name"])
+        options: dict[str, str] = {}
         if layout["name"] == "master":
             orientation = str(layout.get("orientation", "left"))
             if orientation not in {"left", "right", "top", "bottom", "center"}:
                 orientation = "left"
-            parts.append(f"layoutopt:orientation:{orientation}")
+            options["orientation"] = orientation
         elif layout["name"] == "scrolling":
             direction = str(layout.get("direction", "right"))
             if direction not in {"left", "right", "up", "down"}:
                 direction = "right"
-            parts.append(f"layoutopt:direction:{direction}")
-        self._run(["hyprctl", "keyword", "workspace", ", ".join(parts)])
+            options["direction"] = direction
+        spec = (
+            "{workspace="
+            f"{self.lua_string(f'name:{workspace_name}')},layout={self.lua_string(layout_name)}"
+        )
+        if options:
+            values = ",".join(
+                f"{key}={self.lua_string(value)}" for key, value in options.items()
+            )
+            spec += f",layout_opts={{{values}}}"
+        spec += "}"
+        self.eval(f"hl.workspace_rule({spec})")
 
     def apply_pseudo(self, window: dict | str, enabled: bool) -> None:
-        selector = self.selector(window)
+        selector = self.lua_string(self.selector(window))
         action = "enable" if enabled else "disable"
-        code = f"hl.dispatch(hl.dsp.window.pseudo({{action='{action}',window='{selector}'}}))"
-        self.repl(code)
+        self.lua_dispatch(
+            f"hl.dsp.window.pseudo({{action={self.lua_string(action)},window={selector}}})"
+        )
 
     def probe_pseudo(self, window: dict) -> bool:
         if window.get("floating"):
@@ -220,15 +256,26 @@ class Hyprland:
         current = self.find_window(str(window.get("stableId", ""))) or window
         desired_pin = bool(state.get("pinned", False))
         if bool(current.get("pinned", False)) != desired_pin:
-            self.dispatch("pin", self.selector(window))
+            selector = self.lua_string(self.selector(window))
+            action = "set" if desired_pin else "unset"
+            self.lua_dispatch(
+                f"hl.dsp.window.pin({{action={self.lua_string(action)},window={selector}}})"
+            )
         for tag in state.get("tags", []):
             if isinstance(tag, str) and TAG.fullmatch(tag) and not tag.endswith("*"):
-                self.dispatch("tagwindow", f"+{tag} {self.selector(window)}", check=False)
+                selector = self.lua_string(self.selector(window))
+                self.lua_dispatch(
+                    f"hl.dsp.window.tag({{tag={self.lua_string(f'+{tag}')},window={selector}}})",
+                    check=False,
+                )
         internal = int(state.get("fullscreen", 0))
         client = int(state.get("fullscreenClient", 0))
         if internal or client:
-            self.focus(window)
-            self.dispatch("fullscreenstate", f"{internal} {client}")
+            selector = self.lua_string(self.selector(window))
+            self.lua_dispatch(
+                "hl.dsp.window.fullscreen_state({"
+                f"internal={internal},client={client},action='set',window={selector}}})"
+            )
 
     def find_window(self, stable_id: str) -> dict | None:
         return next((item for item in self.clients() if str(item.get("stableId")) == stable_id), None)
@@ -246,7 +293,7 @@ class Hyprland:
             "if w then local l=w.layout; local n=''; local im=''; local pm=''; local ps=''; local ci=''; local cw=''; local iw=''; "
             "if l then n=tostring(l.name or ''); im=tostring(l.is_master or ''); pm=tostring(l.perc_master or ''); ps=tostring(l.perc_size or ''); "
             "if l.column then ci=tostring(l.column.index or ''); cw=tostring(l.column.width or ''); iw=tostring(l.index_in_column or '') end end; "
-            "local gm=''; local gi=''; local gl=''; if w.group then local a={}; for _,m in ipairs(w.group.members) do table.insert(a,tostring(m.stable_id)) end; gm=table.concat(a,','); gi=tostring(w.group.current_index or ''); gl=tostring(w.group.locked or false) end; "
+            "local gm=''; local gi=''; local gl=''; if w.group then local a={}; for _,m in ipairs(w.group.members) do table.insert(a,string.format('%x',m.stable_id)) end; gm=table.concat(a,','); gi=tostring(w.group.current_index or ''); gl=tostring(w.group.locked or false) end; "
             "print('WSPMETA|'..s..'|'..n..'|'..im..'|'..pm..'|'..ps..'|'..ci..'|'..cw..'|'..iw..'|'..gm..'|'..gi..'|'..gl) end end"
         )
         output = self.repl(code)
@@ -283,8 +330,10 @@ class Hyprland:
         if len(members) < 2:
             return
         self.focus(representative)
-        self.dispatch("togglegroup")
         rep_selector = self.selector(representative)
+        self.lua_dispatch(
+            f"hl.dsp.group.toggle({{window={self.lua_string(rep_selector)}}})"
+        )
         for member in members:
             if self.selector(member) == rep_selector:
                 continue
@@ -295,9 +344,13 @@ class Hyprland:
             self.repl(code)
         self.focus(representative)
         if current_index > 1:
-            self.dispatch("changegroupactive", str(current_index), check=False)
+            self.lua_dispatch(
+                "hl.dsp.group.active({"
+                f"index={current_index},window={self.lua_string(rep_selector)}}})",
+                check=False,
+            )
         if locked:
-            self.dispatch("lockactivegroup", "lock", check=False)
+            self.lua_dispatch("hl.dsp.group.lock_active({action='set'})", check=False)
 
     def wait_until_closed(self, stable_ids: set[str], timeout: float) -> set[str]:
         deadline = time.monotonic() + timeout
