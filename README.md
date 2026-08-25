@@ -51,6 +51,8 @@ omarchy plugin add https://github.com/blakestarling/omarchy-workspace-presets.gi
 
 The plugin appears in the right section of the built-in bar. Left-click its workspace icon to open the preset manager; middle-click refreshes the list.
 
+The manager separates individual presets and preset groups into tabs. Each tab has contextual search and sorting by recent use, usage count, name, update time, or size (window count for presets and workspace count for groups).
+
 ### Update, disable, and remove
 
 ```bash

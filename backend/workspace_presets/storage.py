@@ -117,6 +117,7 @@ class PresetStore:
                 raise ValidationError("Preset ids and names must be unique")
             seen_ids.add(preset_id)
             seen_names.add(normalized)
+            PresetStore._validate_usage(preset, "Preset")
         # These fields were added without bumping the schema so existing v1
         # installations remain readable and are upgraded on their next write.
         groups = data.setdefault("presetGroups", [])
@@ -158,10 +159,21 @@ class PresetStore:
                 assigned_presets.add(preset_id)
             group_ids.add(group_id)
             group_names.add(normalized)
+            PresetStore._validate_usage(group, "Preset group")
         startup_group_id = data.get("startupGroupId")
         if startup_group_id is not None and startup_group_id not in group_ids:
             raise ValidationError("The startup preset group does not exist")
         return data
+
+    @staticmethod
+    def _validate_usage(item: dict, label: str) -> None:
+        # Usage metadata is optional so existing schema-v1 files remain valid.
+        count = item.setdefault("useCount", 0)
+        last_used = item.setdefault("lastUsedAt", "")
+        if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+            raise ValidationError(f"{label} useCount must be a non-negative number")
+        if not isinstance(last_used, str):
+            raise ValidationError(f"{label} lastUsedAt must be a string")
 
     @staticmethod
     def normalize_name(name: object) -> str:
@@ -179,6 +191,8 @@ class PresetStore:
             "name": preset["name"],
             "createdAt": preset.get("createdAt", ""),
             "updatedAt": preset.get("updatedAt", ""),
+            "lastUsedAt": preset.get("lastUsedAt", ""),
+            "useCount": preset.get("useCount", 0),
             "layout": snapshot.get("layout", {}).get("name", "unknown"),
             "windowCount": len(windows),
             "unresolvedCount": unresolved,
@@ -225,6 +239,8 @@ class PresetStore:
             "name": group["name"],
             "createdAt": group.get("createdAt", ""),
             "updatedAt": group.get("updatedAt", ""),
+            "lastUsedAt": group.get("lastUsedAt", ""),
+            "useCount": group.get("useCount", 0),
             "assignments": assignments,
             "assignmentCount": len(assignments),
             "loadable": bool(assignments) and all(item["loadable"] for item in assignments),
@@ -261,6 +277,7 @@ class PresetStore:
                 target = {
                     "id": str(uuid.uuid4()), "name": name.strip(),
                     "createdAt": now, "updatedAt": now,
+                    "lastUsedAt": "", "useCount": 0,
                     "assignments": copy.deepcopy(assignments),
                 }
                 data["presetGroups"].append(target)
@@ -334,11 +351,30 @@ class PresetStore:
                     "name": name.strip(),
                     "createdAt": now,
                     "updatedAt": now,
+                    "lastUsedAt": "",
+                    "useCount": 0,
                     "snapshot": snapshot,
                 }
                 data["presets"].append(result)
             self._write_unlocked(data)
             return copy.deepcopy(result)
+
+    def record_preset_use(self, preset_id: str) -> dict:
+        return self._record_use("presets", preset_id, "Preset")
+
+    def record_group_use(self, group_id: str) -> dict:
+        return self._record_use("presetGroups", group_id, "Preset group")
+
+    def _record_use(self, collection: str, item_id: str, label: str) -> dict:
+        with self._locked(exclusive=True):
+            data = self._read_unlocked()
+            target = next((item for item in data[collection] if item["id"] == item_id), None)
+            if target is None:
+                raise ValidationError(f"{label} {item_id!r} does not exist")
+            target["useCount"] = int(target.get("useCount", 0)) + 1
+            target["lastUsedAt"] = utc_now()
+            self._write_unlocked(data)
+            return copy.deepcopy(target)
 
     def rename(self, preset_id: str, name: str) -> dict:
         normalized = self.normalize_name(name)

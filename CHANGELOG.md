@@ -2,6 +2,14 @@
 
 All notable changes to Workspace Presets are documented here.
 
+## 1.3.0 - 2026-08-25
+
+- Split preset and preset-group management into focused tabs.
+- Add contextual search across names, saved applications, layouts, assignments, and workspace numbers.
+- Add Recent, Most used, Name, Recently updated, and size-based sorting for both tabs.
+- Track successful preset and group launches with backward-compatible usage counts and last-used timestamps.
+- Keep workspace-number fields synchronized with saved group assignments after edits and refreshes.
+
 ## 1.2.1 - 2026-08-25
 
 - Recognize installed Omarchy panel plugins by their manifests and save a native shell-IPC launcher instead of requiring manual setup.

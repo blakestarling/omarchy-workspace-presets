@@ -19,6 +19,13 @@ Panel {
   property string editingGroupId: ""
   property string editingGroupName: ""
   property var confirmGroup: null
+  property string activeTab: "presets"
+  property string presetSearch: ""
+  property string groupSearch: ""
+  property string presetSort: "recent"
+  property string groupSort: "recent"
+  readonly property var visiblePresets: filteredPresets()
+  readonly property var visibleGroups: filteredGroups()
   readonly property var barIdentity: hostWidget || root
   readonly property var presetService: bar?.shell?.serviceFor(moduleName)
   readonly property color foreground: bar ? bar.foreground : Color.foreground
@@ -56,6 +63,80 @@ Panel {
     for (var index = 0; index < assignments.length; index++)
       if (assignments[index].presetId === presetId) return Number(assignments[index].workspace)
     return 0
+  }
+
+  function currentGroup(groupId) {
+    var groups = presetService && Array.isArray(presetService.presetGroups)
+      ? presetService.presetGroups : []
+    for (var index = 0; index < groups.length; index++)
+      if (groups[index].id === groupId) return groups[index]
+    return null
+  }
+
+  function workspaceForCurrentGroup(groupId, presetId) {
+    return workspaceFor(currentGroup(groupId), presetId)
+  }
+
+  function compareName(left, right) {
+    return String(left.name || "").toLocaleLowerCase()
+      .localeCompare(String(right.name || "").toLocaleLowerCase())
+  }
+
+  function compareRecent(left, right) {
+    var leftUsed = String(left.lastUsedAt || "")
+    var rightUsed = String(right.lastUsedAt || "")
+    if (leftUsed !== rightUsed) return rightUsed.localeCompare(leftUsed)
+    return String(right.updatedAt || "").localeCompare(String(left.updatedAt || ""))
+  }
+
+  function compareMostUsed(left, right) {
+    var difference = Number(right.useCount || 0) - Number(left.useCount || 0)
+    return difference !== 0 ? difference : compareRecent(left, right)
+  }
+
+  function filteredPresets() {
+    var values = presetService && Array.isArray(presetService.presets)
+      ? presetService.presets.slice() : []
+    var query = presetSearch.trim().toLocaleLowerCase()
+    if (query !== "") values = values.filter(function(item) {
+      var windows = (item.windows || []).map(function(window) {
+        return String(window.class || "") + " " + String(window.title || "")
+      }).join(" ")
+      return (String(item.name || "") + " " + String(item.layout || "") + " " + windows)
+        .toLocaleLowerCase().indexOf(query) !== -1
+    })
+    values.sort(function(left, right) {
+      if (presetSort === "most-used") return compareMostUsed(left, right)
+      if (presetSort === "name") return compareName(left, right)
+      if (presetSort === "updated")
+        return String(right.updatedAt || "").localeCompare(String(left.updatedAt || ""))
+      if (presetSort === "windows")
+        return Number(right.windowCount || 0) - Number(left.windowCount || 0) || compareName(left, right)
+      return compareRecent(left, right)
+    })
+    return values
+  }
+
+  function filteredGroups() {
+    var values = presetService && Array.isArray(presetService.presetGroups)
+      ? presetService.presetGroups.slice() : []
+    var query = groupSearch.trim().toLocaleLowerCase()
+    if (query !== "") values = values.filter(function(item) {
+      var assignments = (item.assignments || []).map(function(assignment) {
+        return String(assignment.presetName || "") + " workspace " + String(assignment.workspace || "")
+      }).join(" ")
+      return (String(item.name || "") + " " + assignments).toLocaleLowerCase().indexOf(query) !== -1
+    })
+    values.sort(function(left, right) {
+      if (groupSort === "most-used") return compareMostUsed(left, right)
+      if (groupSort === "name") return compareName(left, right)
+      if (groupSort === "updated")
+        return String(right.updatedAt || "").localeCompare(String(left.updatedAt || ""))
+      if (groupSort === "workspaces")
+        return Number(right.assignmentCount || 0) - Number(left.assignmentCount || 0) || compareName(left, right)
+      return compareRecent(left, right)
+    })
+    return values
   }
 
   component ActionButton: BorderSurface {
@@ -96,6 +177,38 @@ Panel {
       hoverEnabled: true
       cursorShape: action.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
       onClicked: action.clicked()
+    }
+  }
+
+  component TabButton: BorderSurface {
+    id: tab
+    property string label: ""
+    property bool selected: false
+    signal clicked()
+
+    implicitHeight: Style.space(34)
+    radius: Style.cornerRadius
+    color: selected
+      ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.16)
+      : (tabMouse.containsMouse
+        ? Style.hoverFillFor(root.foreground, Color.accent)
+        : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.035))
+    borderSpec: Border.flat(selected ? Color.accent : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.12), 1)
+
+    Text {
+      anchors.centerIn: parent
+      text: tab.label
+      color: root.foreground
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.bodySmall
+      font.bold: true
+    }
+    MouseArea {
+      id: tabMouse
+      anchors.fill: parent
+      hoverEnabled: true
+      cursorShape: Qt.PointingHandCursor
+      onClicked: tab.clicked()
     }
   }
 
@@ -169,8 +282,84 @@ Panel {
           }
         }
 
+        Row {
+          width: parent.width
+          spacing: Style.space(8)
+
+          TabButton {
+            width: (parent.width - parent.spacing) / 2
+            label: "Presets" + (root.presetService ? " (" + root.presetService.presets.length + ")" : "")
+            selected: root.activeTab === "presets"
+            onClicked: {
+              root.activeTab = "presets"
+              searchField.text = root.presetSearch
+              sortDropdown.value = root.presetSort
+              scroll.contentY = 0
+            }
+          }
+          TabButton {
+            width: (parent.width - parent.spacing) / 2
+            label: "Preset Groups" + (root.presetService ? " (" + root.presetService.presetGroups.length + ")" : "")
+            selected: root.activeTab === "groups"
+            onClicked: {
+              root.activeTab = "groups"
+              searchField.text = root.groupSearch
+              sortDropdown.value = root.groupSort
+              scroll.contentY = 0
+            }
+          }
+        }
+
+        Row {
+          width: parent.width
+          spacing: Style.space(8)
+
+          TextField {
+            id: searchField
+            width: parent.width - sortDropdown.width - parent.spacing
+            placeholderText: root.activeTab === "presets"
+              ? "Search presets, apps, or layouts"
+              : "Search groups, presets, or workspaces"
+            text: root.activeTab === "presets" ? root.presetSearch : root.groupSearch
+            foreground: root.foreground
+            accent: Color.accent
+            onTextChanged: {
+              if (root.activeTab === "presets") root.presetSearch = text
+              else root.groupSearch = text
+            }
+          }
+
+          Dropdown {
+            id: sortDropdown
+            width: Style.space(190)
+            showLabel: false
+            value: root.activeTab === "presets" ? root.presetSort : root.groupSort
+            options: root.activeTab === "presets" ? [
+              { value: "recent", label: "Recent" },
+              { value: "most-used", label: "Most used" },
+              { value: "name", label: "Name A–Z" },
+              { value: "updated", label: "Recently updated" },
+              { value: "windows", label: "Most windows" }
+            ] : [
+              { value: "recent", label: "Recent" },
+              { value: "most-used", label: "Most used" },
+              { value: "name", label: "Name A–Z" },
+              { value: "updated", label: "Recently updated" },
+              { value: "workspaces", label: "Most workspaces" }
+            ]
+            foreground: root.foreground
+            accent: Color.accent
+            fontFamily: root.fontFamily
+            onChanged: function(nextValue) {
+              if (root.activeTab === "presets") root.presetSort = nextValue
+              else root.groupSort = nextValue
+            }
+          }
+        }
+
         BorderSurface {
           width: parent.width
+          visible: root.activeTab === "presets"
           implicitHeight: saveColumn.implicitHeight + Style.space(20)
           radius: Style.cornerRadius
           color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.04)
@@ -459,6 +648,7 @@ Panel {
 
         Text {
           text: "Saved presets"
+          visible: root.activeTab === "presets"
           color: root.foreground
           font.family: root.fontFamily
           font.pixelSize: Style.font.subtitle
@@ -467,8 +657,11 @@ Panel {
 
         Text {
           width: parent.width
-          visible: root.presetService && root.presetService.presets.length === 0 && !root.presetService.busy
-          text: "Save this workspace to create your first preset."
+          visible: root.activeTab === "presets" && root.presetService
+            && root.visiblePresets.length === 0 && !root.presetService.busy
+          text: root.presetService && root.presetService.presets.length === 0
+            ? "Save this workspace to create your first preset."
+            : "No presets match your search."
           color: Color.muted
           font.family: root.fontFamily
           font.pixelSize: Style.font.body
@@ -476,7 +669,7 @@ Panel {
         }
 
         Repeater {
-          model: root.presetService ? root.presetService.presets : []
+          model: root.activeTab === "presets" ? root.visiblePresets : []
 
           BorderSurface {
             id: presetCard
@@ -525,7 +718,9 @@ Panel {
                     }
                   }
                   Text {
-                    text: presetCard.modelData.windowCount + " window(s) · Updated " + presetCard.modelData.updatedAt
+                    text: presetCard.modelData.windowCount + " window(s) · Used "
+                      + String(presetCard.modelData.useCount || 0) + " time(s)"
+                      + (presetCard.modelData.lastUsedAt ? " · Last used " + presetCard.modelData.lastUsedAt : "")
                     color: Color.muted
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.caption
@@ -604,6 +799,7 @@ Panel {
 
         Text {
           text: "Preset groups"
+          visible: root.activeTab === "groups"
           color: root.foreground
           font.family: root.fontFamily
           font.pixelSize: Style.font.subtitle
@@ -612,6 +808,7 @@ Panel {
 
         BorderSurface {
           width: parent.width
+          visible: root.activeTab === "groups"
           implicitHeight: createGroupColumn.implicitHeight + Style.space(18)
           radius: Style.cornerRadius
           color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.04)
@@ -658,8 +855,11 @@ Panel {
 
         Text {
           width: parent.width
-          visible: root.presetService && root.presetService.presetGroups.length === 0 && !root.presetService.busy
-          text: "No preset groups yet."
+          visible: root.activeTab === "groups" && root.presetService
+            && root.visibleGroups.length === 0 && !root.presetService.busy
+          text: root.presetService && root.presetService.presetGroups.length === 0
+            ? "No preset groups yet."
+            : "No preset groups match your search."
           color: Color.muted
           font.family: root.fontFamily
           font.pixelSize: Style.font.body
@@ -667,7 +867,7 @@ Panel {
         }
 
         Repeater {
-          model: root.presetService ? root.presetService.presetGroups : []
+          model: root.activeTab === "groups" ? root.visibleGroups : []
 
           BorderSurface {
             id: groupCard
@@ -711,6 +911,7 @@ Panel {
               Text {
                 text: groupCard.modelData.assignmentCount + " workspace assignment(s)"
                   + (groupCard.modelData.loadable ? " · Ready" : " · Assign one or more ready presets")
+                  + " · Used " + String(groupCard.modelData.useCount || 0) + " time(s)"
                 color: groupCard.modelData.loadable ? Color.muted : Color.urgent
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
@@ -765,7 +966,9 @@ Panel {
                 Row {
                   id: assignmentRow
                   required property var modelData
-                  property int assignedWorkspace: root.workspaceFor(groupCard.modelData, modelData.id)
+                  readonly property int assignedWorkspace: root.workspaceForCurrentGroup(
+                    groupCard.modelData.id, modelData.id
+                  )
                   width: groupColumn.width
                   spacing: Style.space(7)
                   Text {
@@ -780,10 +983,18 @@ Panel {
                     id: workspaceField
                     width: Style.space(72)
                     placeholderText: "WS #"
-                    text: assignmentRow.assignedWorkspace > 0 ? String(assignmentRow.assignedWorkspace) : ""
                     foreground: root.foreground
                     accent: Color.accent
+                    function syncFromSavedAssignment() {
+                      text = assignmentRow.assignedWorkspace > 0
+                        ? String(assignmentRow.assignedWorkspace) : ""
+                    }
+                    Component.onCompleted: syncFromSavedAssignment()
                     onAccepted: assignButton.clicked()
+                    Connections {
+                      target: root.presetService
+                      function onPresetGroupsChanged() { workspaceField.syncFromSavedAssignment() }
+                    }
                   }
                   ActionButton {
                     id: assignButton
@@ -813,7 +1024,8 @@ Panel {
 
         BorderSurface {
           width: parent.width
-          visible: root.presetService && root.presetService.selectedDetails !== null
+          visible: root.activeTab === "presets" && root.presetService
+            && root.presetService.selectedDetails !== null
           implicitHeight: resolverColumn.implicitHeight + Style.space(20)
           radius: Style.cornerRadius
           color: Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.06)

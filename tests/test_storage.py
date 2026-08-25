@@ -35,6 +35,8 @@ class PresetStoreTests(unittest.TestCase):
         self.assertEqual(parsed["schemaVersion"], 1)
         self.assertEqual(parsed["presetGroups"], [])
         self.assertIsNone(parsed["startupGroupId"])
+        self.assertEqual(parsed["presets"][0]["useCount"], 0)
+        self.assertEqual(parsed["presets"][0]["lastUsedAt"], "")
 
     def test_names_are_case_insensitively_unique(self):
         self.store.save_snapshot("Coding", self.snapshot)
@@ -101,6 +103,18 @@ class PresetStoreTests(unittest.TestCase):
         draft = self.store.save_group("Draft group", [])
         with self.assertRaisesRegex(ValidationError, "complete, loadable"):
             self.store.set_startup_group(draft["id"])
+
+    def test_usage_metadata_is_backward_compatible_and_recorded(self):
+        preset = self.store.save_snapshot("Used preset", self.snapshot)
+        group = self.store.save_group("Used group", [])
+        preset_summary = self.store.public_summary(self.store.record_preset_use(preset["id"]))
+        group_summary = self.store.public_group_summary(
+            self.store.record_group_use(group["id"]), {}, None
+        )
+        self.assertEqual(preset_summary["useCount"], 1)
+        self.assertTrue(preset_summary["lastUsedAt"])
+        self.assertEqual(group_summary["useCount"], 1)
+        self.assertTrue(group_summary["lastUsedAt"])
 
 
 if __name__ == "__main__":

@@ -498,6 +498,7 @@ class WorkspaceEngine:
             "groupId": group_id, "name": check["group"]["name"],
             "workspaceCount": len(results), "results": results,
         }
+        self.store.record_group_use(group_id)
         self.progress("complete", f"Loaded group {check['group']['name']}", result)
         return result
 
@@ -638,6 +639,7 @@ class WorkspaceEngine:
             "workspace": workspace_name,
             "windowCount": len(slot_windows),
         }
+        self.store.record_preset_use(preset_id)
         self.progress("complete", f"Loaded {preset['name']}", result)
         return result
 
