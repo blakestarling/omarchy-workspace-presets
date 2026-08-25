@@ -105,14 +105,14 @@ The widget exposes the standard Omarchy shell panel actions:
 
 ```bash
 omarchy-shell shell toggle blakestarling.workspace-presets
-omarchy-shell shell refresh blakestarling.workspace-presets
-omarchy-shell shell save blakestarling.workspace-presets "Coding"
+omarchy-shell blakestarling.workspace-presets refresh
+omarchy-shell blakestarling.workspace-presets save "Coding"
 ```
 
 Starting a load over IPC still opens the panel for destructive confirmation:
 
 ```bash
-omarchy-shell shell load blakestarling.workspace-presets PRESET_UUID
+omarchy-shell blakestarling.workspace-presets load PRESET_UUID
 ```
 
 ## Data and security

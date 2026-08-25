@@ -50,6 +50,22 @@ BarWidget {
     function hide(): void { root.close() }
     function toggle(): void { root.togglePanel() }
     function refresh(): void { if (root.presetService) root.presetService.refresh() }
+    function status(): string {
+      if (!root.presetService) return JSON.stringify({ available: false })
+      return JSON.stringify({
+        available: true,
+        initialized: root.presetService.initialized,
+        sourceDir: root.presetService.sourceDir,
+        backendPath: root.presetService.backendPath,
+        capabilitiesChecked: root.presetService.capabilitiesChecked,
+        capabilities: root.presetService.capabilities,
+        busy: root.presetService.busy,
+        currentOperation: root.presetService.currentOperation,
+        queuedCommands: root.presetService.commandQueue.length,
+        statusMessage: root.presetService.statusMessage,
+        errorMessage: root.presetService.errorMessage
+      })
+    }
     function save(name: string): string {
       if (!root.presetService) return "service unavailable"
       root.presetService.capture(name)

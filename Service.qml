@@ -12,6 +12,7 @@ Item {
 
   property var presets: []
   property var capabilities: ({ ready: false, missingCommands: [] })
+  property bool capabilitiesChecked: false
   property var selectedDetails: null
   property var desktopEntries: []
   property var pendingPreflight: null
@@ -145,6 +146,10 @@ Item {
       errorMessage = String(event.message || "Workspace Presets failed")
       statusMessage = errorMessage
       lastResult = event
+      if (currentOperation === "capabilities") {
+        capabilitiesChecked = true
+        capabilities = ({ ready: false, missingCommands: [], error: errorMessage })
+      }
       return
     }
     if (event.type !== "result") return
@@ -154,6 +159,7 @@ Item {
       presets = Array.isArray(event.data) ? event.data : []
       statusMessage = presets.length === 0 ? "No presets saved yet" : "Ready"
     } else if (operation === "capabilities") {
+      capabilitiesChecked = true
       capabilities = event.data || ({ ready: false })
       if (!capabilities.ready) statusMessage = "System requirements are not met"
     } else if (operation === "details") {
@@ -190,6 +196,10 @@ Item {
       if (exitCode !== 0 && !backend.hadStructuredError) {
         root.errorMessage = backend.stderrText || "Backend exited with status " + exitCode
         root.statusMessage = root.errorMessage
+        if (root.currentOperation === "capabilities") {
+          root.capabilitiesChecked = true
+          root.capabilities = ({ ready: false, missingCommands: [], error: root.errorMessage })
+        }
       }
       if (root.refreshAfterCurrent) {
         root.refreshAfterCurrent = false

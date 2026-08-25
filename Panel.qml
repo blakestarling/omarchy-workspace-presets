@@ -221,7 +221,7 @@ Panel {
 
         BorderSurface {
           width: parent.width
-          visible: root.presetService && !root.presetService.capabilities.ready
+          visible: root.presetService && root.presetService.capabilitiesChecked && !root.presetService.capabilities.ready
           implicitHeight: requirementsColumn.implicitHeight + Style.space(18)
           radius: Style.cornerRadius
           color: Qt.rgba(Color.urgent.r, Color.urgent.g, Color.urgent.b, 0.10)
@@ -244,9 +244,19 @@ Panel {
             Text {
               width: parent.width
               wrapMode: Text.Wrap
-              text: root.presetService
-                ? "Requires Omarchy 4.0+, Hyprland 0.56+, Python 3, uwsm-app, and gtk-launch. Missing: " + (root.presetService.capabilities.missingCommands || []).join(", ")
-                : ""
+              text: {
+                if (!root.presetService) return ""
+                var capability = root.presetService.capabilities || ({})
+                var parts = ["Requires Omarchy 4.0+, Hyprland 0.56+, Python 3, uwsm-app, and gtk-launch."]
+                if (capability.error) parts.push(String(capability.error))
+                if ((capability.missingCommands || []).length > 0)
+                  parts.push("Missing: " + capability.missingCommands.join(", ") + ".")
+                if (capability.omarchyVersion)
+                  parts.push("Omarchy: " + capability.omarchyVersion + (capability.supportedOmarchy ? "" : " (unsupported)"))
+                if (capability.hyprlandVersion)
+                  parts.push("Hyprland: " + capability.hyprlandVersion + (capability.supportedHyprland ? "" : " (unsupported)"))
+                return parts.join(" ")
+              }
               color: root.foreground
               font.family: root.fontFamily
               font.pixelSize: Style.font.bodySmall
