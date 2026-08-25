@@ -57,7 +57,10 @@ Item {
     lastResult = null
     backend.stderrText = ""
     backend.hadStructuredError = false
-    backend.command = ["python3", backendPath].concat(next.args)
+    // Omarchy watches every file under an installed plugin. Python bytecode
+    // caches would therefore reload this service while its first command is
+    // still running, so the worker must leave the checkout completely inert.
+    backend.command = ["python3", "-B", backendPath].concat(next.args)
     busy = true
     backend.running = true
   }

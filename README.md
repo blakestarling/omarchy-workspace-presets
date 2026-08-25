@@ -132,8 +132,8 @@ Desktop launchers store only the desktop entry ID, so application updates can ch
 Check compatibility and inspect saved presets without loading anything:
 
 ```bash
-python3 ~/.config/omarchy/plugins/blakestarling.workspace-presets/backend/main.py capabilities
-python3 ~/.config/omarchy/plugins/blakestarling.workspace-presets/backend/main.py list
+python3 -B ~/.config/omarchy/plugins/blakestarling.workspace-presets/backend/main.py capabilities
+python3 -B ~/.config/omarchy/plugins/blakestarling.workspace-presets/backend/main.py list
 ```
 
 Validate the installed manifest:
