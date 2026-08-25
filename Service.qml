@@ -33,6 +33,7 @@ Item {
     if (initialized || backendPath === "") return
     initialized = true
     enqueue(["capabilities"], "capabilities")
+    enqueue(["resolve-launchers"], "resolve-launchers")
     enqueue(["list"], "list")
     enqueue(["groups"], "groups")
     enqueue(["startup-group"], "startup-group")
@@ -243,6 +244,9 @@ Item {
       statusMessage = "Choose a launcher for each unresolved window"
     } else if (operation === "desktop-entries") {
       desktopEntries = Array.isArray(event.data) ? event.data : []
+    } else if (operation === "resolve-launchers") {
+      var repaired = event.data && Number(event.data.resolvedWindowCount) || 0
+      if (repaired > 0) statusMessage = "Resolved " + repaired + " saved launcher(s)"
     } else if (operation === "preflight" || operation === "group-preflight") {
       var check = event.data || null
       var windowsToClose = check && Array.isArray(check.windowsToClose) ? check.windowsToClose : []

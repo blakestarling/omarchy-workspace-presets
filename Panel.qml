@@ -274,7 +274,7 @@ Panel {
               text: {
                 if (!root.presetService) return ""
                 var capability = root.presetService.capabilities || ({})
-                var parts = ["Requires Omarchy 4.0+, Hyprland 0.56+, Python 3, uwsm-app, and gtk-launch."]
+                var parts = ["Requires Omarchy 4.0+, Hyprland 0.56+, Python 3, uwsm-app, gtk-launch, and omarchy-shell."]
                 if (capability.error) parts.push(String(capability.error))
                 if ((capability.missingCommands || []).length > 0)
                   parts.push("Missing: " + capability.missingCommands.join(", ") + ".")

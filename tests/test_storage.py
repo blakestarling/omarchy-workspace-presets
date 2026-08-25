@@ -61,6 +61,16 @@ class PresetStoreTests(unittest.TestCase):
         self.assertTrue(self.store.public_summary(updated)["loadable"])
         with self.assertRaises(ValidationError):
             self.store.set_launcher(saved["id"], "slot-1", {"kind": "command", "argv": []})
+        updated = self.store.set_launcher(
+            saved["id"], "slot-1",
+            {"kind": "omarchy-plugin", "pluginId": "quickshell.spotify"},
+        )
+        self.assertTrue(self.store.public_summary(updated)["loadable"])
+        with self.assertRaises(ValidationError):
+            self.store.set_launcher(
+                saved["id"], "slot-1",
+                {"kind": "omarchy-plugin", "pluginId": "bad plugin id"},
+            )
 
     def test_group_management_and_startup_selection(self):
         preset = self.store.save_snapshot("Ready", self.snapshot)

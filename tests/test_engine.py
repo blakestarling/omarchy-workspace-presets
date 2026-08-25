@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from workspace_presets.desktop import OmarchyPanelPlugin
 from workspace_presets.engine import WorkspaceEngine
 from workspace_presets.storage import PresetStore
 
@@ -203,6 +204,44 @@ class EngineRestoreTests(unittest.TestCase):
             with self.assertRaisesRegex(Exception, "changed after confirmation"):
                 engine.load_group(group["id"], expected_token="stale")
             self.assertEqual(fake.actions, [])
+
+    def test_omarchy_panel_launcher_uses_shell_summon_ipc(self):
+        with patch("workspace_presets.engine.subprocess.Popen") as popen:
+            WorkspaceEngine._launch({
+                "kind": "omarchy-plugin", "pluginId": "quickshell.spotify"
+            })
+        command = popen.call_args.args[0]
+        self.assertEqual(command, [
+            "uwsm-app", "--", "omarchy-shell", "shell", "summon",
+            "quickshell.spotify", "{}",
+        ])
+
+    def test_existing_draft_gets_automatic_panel_launcher(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = PresetStore(Path(directory) / "presets.json")
+            snapshot = self._single_window_snapshot()
+            snapshot["windows"][0]["match"] = {
+                "class": "org.quickshell", "initialClass": "org.quickshell",
+                "title": "Omarchy Spotify", "initialTitle": "Omarchy Spotify",
+            }
+            snapshot["windows"][0]["launcher"] = None
+            preset = store.save_snapshot("Spotify", snapshot)
+            engine = WorkspaceEngine(store=store, hyprland=FakeHyprland())
+            panels = {
+                "quickshell.spotify": OmarchyPanelPlugin(
+                    "quickshell.spotify", "Omarchy Spotify", "/manifest.json"
+                )
+            }
+            with (
+                patch("workspace_presets.engine.scan_desktop_entries", return_value={}),
+                patch("workspace_presets.engine.scan_omarchy_panel_plugins", return_value=panels),
+            ):
+                result = engine.resolve_unresolved_launchers()
+            self.assertEqual(result["resolvedWindowCount"], 1)
+            self.assertEqual(
+                store.get(preset["id"])["snapshot"]["windows"][0]["launcher"],
+                {"kind": "omarchy-plugin", "pluginId": "quickshell.spotify"},
+            )
 
 
 if __name__ == "__main__":

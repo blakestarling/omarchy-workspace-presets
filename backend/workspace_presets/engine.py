@@ -15,7 +15,12 @@ from pathlib import Path
 from typing import Callable
 
 from . import SUPPORTED_LAYOUTS
-from .desktop import process_executable, resolve_launcher, scan_desktop_entries
+from .desktop import (
+    process_executable,
+    resolve_launcher,
+    scan_desktop_entries,
+    scan_omarchy_panel_plugins,
+)
 from .errors import LaunchError, RestoreError, UnsupportedError, ValidationError
 from .hyprland import Hyprland, wait_for_new_window, window_match_score
 from .layouts import (
@@ -50,7 +55,10 @@ class WorkspaceEngine:
         self.progress = progress or _noop_progress
 
     def capabilities(self) -> dict:
-        missing = [name for name in ("hyprctl", "uwsm-app", "gtk-launch") if not shutil.which(name)]
+        missing = [
+            name for name in ("hyprctl", "uwsm-app", "gtk-launch", "omarchy-shell")
+            if not shutil.which(name)
+        ]
         hypr_version = self.hypr.version().get("version", "") if not missing or "hyprctl" not in missing else ""
         omarchy_version = ""
         if shutil.which("omarchy"):
@@ -93,6 +101,7 @@ class WorkspaceEngine:
             raise ValidationError("The active workspace has no application windows")
         metadata = self.hypr.layout_metadata(clients)
         entries = scan_desktop_entries()
+        panel_plugins = scan_omarchy_panel_plugins()
         stable_to_slot: dict[str, str] = {
             str(client.get("stableId")): str(uuid.uuid4()) for client in clients
         }
@@ -111,7 +120,7 @@ class WorkspaceEngine:
                 "xwayland": bool(client.get("xwayland", False)),
             }
             resolution_input = {**client, "executable": executable}
-            launcher, candidates = resolve_launcher(resolution_input, entries)
+            launcher, candidates = resolve_launcher(resolution_input, entries, panel_plugins)
             geometry = rect_for(client)
             self.progress(
                 "capture",
@@ -331,6 +340,28 @@ class WorkspaceEngine:
             "requiresConfirmation": bool(current),
         }
 
+    def resolve_unresolved_launchers(self) -> dict:
+        entries = scan_desktop_entries()
+        panel_plugins = scan_omarchy_panel_plugins()
+        resolved = 0
+        changed_presets = 0
+        for summary in self.store.list_summaries():
+            if summary["unresolvedCount"] == 0:
+                continue
+            preset = self.store.get(summary["id"])
+            changed = False
+            for slot in preset.get("snapshot", {}).get("windows", []):
+                if slot.get("launcher"):
+                    continue
+                launcher, _ = resolve_launcher(slot.get("match", {}), entries, panel_plugins)
+                if launcher:
+                    self.store.set_launcher(preset["id"], slot["id"], launcher)
+                    resolved += 1
+                    changed = True
+            if changed:
+                changed_presets += 1
+        return {"resolvedWindowCount": resolved, "changedPresetCount": changed_presets}
+
     def preflight_group(self, group_id: str) -> dict:
         capability = self.capabilities()
         if not capability["ready"]:
@@ -464,13 +495,19 @@ class WorkspaceEngine:
         if launcher["kind"] == "desktop":
             if launcher["desktopId"] not in entries:
                 raise ValidationError(f"Desktop entry {launcher['desktopId']!r} no longer exists")
-        else:
+        elif launcher["kind"] == "command":
             executable = launcher["argv"][0]
             if "/" in executable:
                 if not Path(executable).expanduser().is_file():
                     raise ValidationError(f"Custom command {executable!r} no longer exists")
             elif not shutil.which(executable):
                 raise ValidationError(f"Custom command {executable!r} is not on PATH")
+        else:
+            plugin_id = launcher["pluginId"]
+            if not shutil.which("omarchy-shell"):
+                raise ValidationError("Required command 'omarchy-shell' is not on PATH")
+            if plugin_id not in scan_omarchy_panel_plugins():
+                raise ValidationError(f"Omarchy plugin {plugin_id!r} is no longer installed")
 
     def load(
         self,
@@ -596,6 +633,11 @@ class WorkspaceEngine:
     def _launch(launcher: dict) -> None:
         if launcher["kind"] == "desktop":
             command = ["uwsm-app", "--", "gtk-launch", launcher["desktopId"]]
+        elif launcher["kind"] == "omarchy-plugin":
+            command = [
+                "uwsm-app", "--", "omarchy-shell", "shell", "summon",
+                launcher["pluginId"], "{}",
+            ]
         else:
             command = ["uwsm-app", "--", *launcher["argv"]]
         try:

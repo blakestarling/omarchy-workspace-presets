@@ -15,6 +15,7 @@ This is a native Omarchy Quattro plugin: the bar widget and management panel run
 - Window groups, member order, active member, and lock state
 - Fullscreen/maximized, pseudotile, pinning, and static tags
 - Duplicate windows with the same class, tracked as independent slots
+- Omarchy shell panels, such as Omarchy Spotify, discovered from their plugin manifests
 
 Application-owned state is outside the compositor's control and is not restored. That includes browser tabs, open documents, unsaved editor buffers, and terminal processes. Apps may restore some of that themselves through their own session support.
 
@@ -77,7 +78,7 @@ If `XDG_CONFIG_HOME` is set, the data directory is `$XDG_CONFIG_HOME/omarchy-wor
 4. If every window maps unambiguously to an installed desktop entry, the preset is immediately loadable.
 5. Otherwise, choose **Set up** and select a suggested desktop entry, enter a `.desktop` ID, or provide a custom argv JSON array such as `["foot"]`.
 
-A preset that needs launcher setup is saved as an explicit draft. It cannot be loaded until every window has a launch recipe; there are no `TODO` launch commands and unresolved windows are never silently skipped.
+A preset that needs launcher setup is saved as an explicit draft. It cannot be loaded until every window has a launch recipe; there are no `TODO` launch commands and unresolved windows are never silently skipped. Installed Omarchy panel plugins are matched by their manifest name and relaunched through `omarchy-shell`; existing drafts are rechecked automatically when the service starts.
 
 ### Load
 

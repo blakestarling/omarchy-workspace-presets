@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import configparser
+import json
 import os
 import re
 import shlex
@@ -33,6 +34,46 @@ class DesktopEntry:
             "terminal": self.terminal,
             "noDisplay": self.no_display,
         }
+
+
+@dataclass(frozen=True)
+class OmarchyPanelPlugin:
+    plugin_id: str
+    name: str
+    path: str
+
+
+def _omarchy_plugin_roots() -> list[Path]:
+    config_home = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+    return [config_home / "omarchy/plugins", Path("/usr/share/omarchy/shell/plugins")]
+
+
+def scan_omarchy_panel_plugins(roots: list[Path] | None = None) -> dict[str, OmarchyPanelPlugin]:
+    """Discover panel plugins from manifests, with user plugins taking precedence."""
+    plugins: dict[str, OmarchyPanelPlugin] = {}
+    plugin_names: set[str] = set()
+    for root in roots or _omarchy_plugin_roots():
+        if not root.is_dir():
+            continue
+        for path in sorted(root.rglob("manifest.json")):
+            try:
+                manifest = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            plugin_id = manifest.get("id")
+            name = manifest.get("name")
+            kinds = manifest.get("kinds", [])
+            if (
+                not isinstance(plugin_id, str) or not plugin_id
+                or not isinstance(name, str) or not name.strip()
+                or not isinstance(kinds, list) or "panel" not in kinds
+                or plugin_id in plugins
+                or _norm(name) in plugin_names
+            ):
+                continue
+            plugins[plugin_id] = OmarchyPanelPlugin(plugin_id, name.strip(), str(path))
+            plugin_names.add(_norm(name))
+    return plugins
 
 
 def _data_dirs() -> list[Path]:
@@ -135,7 +176,23 @@ def score_entry(entry: DesktopEntry, window: dict) -> tuple[int, list[str]]:
     return score, reasons
 
 
-def resolve_launcher(window: dict, entries: dict[str, DesktopEntry]) -> tuple[dict | None, list[dict]]:
+def resolve_launcher(
+    window: dict,
+    entries: dict[str, DesktopEntry],
+    panel_plugins: dict[str, OmarchyPanelPlugin] | None = None,
+) -> tuple[dict | None, list[dict]]:
+    window_classes = {_norm(window.get("class")), _norm(window.get("initialClass"))}
+    if "org.quickshell" in window_classes:
+        titles = {_norm(window.get("title")), _norm(window.get("initialTitle"))}
+        matching_panels = [
+            plugin for plugin in (panel_plugins or {}).values()
+            if _norm(plugin.name) in titles
+        ]
+        if len(matching_panels) == 1:
+            return {
+                "kind": "omarchy-plugin",
+                "pluginId": matching_panels[0].plugin_id,
+            }, []
     scored: list[tuple[int, DesktopEntry, list[str]]] = []
     for entry in entries.values():
         score, reasons = score_entry(entry, window)

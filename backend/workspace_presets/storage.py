@@ -6,6 +6,7 @@ import copy
 import fcntl
 import json
 import os
+import re
 import tempfile
 import uuid
 from contextlib import contextmanager
@@ -15,6 +16,9 @@ from typing import Iterator
 
 from . import SCHEMA_VERSION
 from .errors import ValidationError
+
+
+PLUGIN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 def utc_now() -> str:
@@ -410,4 +414,9 @@ class PresetStore:
             ):
                 raise ValidationError("Custom launchers require a non-empty argv array")
             return
-        raise ValidationError("Launcher kind must be desktop or command")
+        if kind == "omarchy-plugin":
+            plugin_id = launcher.get("pluginId")
+            if not isinstance(plugin_id, str) or not PLUGIN_ID.fullmatch(plugin_id):
+                raise ValidationError("Omarchy plugin launchers require a valid plugin id")
+            return
+        raise ValidationError("Launcher kind must be desktop, command, or omarchy-plugin")

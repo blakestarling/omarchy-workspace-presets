@@ -3,7 +3,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from workspace_presets.desktop import resolve_launcher, scan_desktop_entries
+from workspace_presets.desktop import (
+    OmarchyPanelPlugin,
+    resolve_launcher,
+    scan_desktop_entries,
+    scan_omarchy_panel_plugins,
+)
 
 
 class DesktopEntryTests(unittest.TestCase):
@@ -37,6 +42,37 @@ class DesktopEntryTests(unittest.TestCase):
             )
             self.assertIsNone(launcher)
             self.assertEqual(len(candidates), 2)
+
+    def test_omarchy_panel_manifest_resolves_quickshell_window(self):
+        with tempfile.TemporaryDirectory() as directory:
+            plugin = Path(directory) / "quickshell.spotify"
+            plugin.mkdir()
+            (plugin / "manifest.json").write_text(
+                '{"id":"quickshell.spotify","name":"Omarchy Spotify",'
+                '"kinds":["service","bar-widget","panel"]}'
+            )
+            panels = scan_omarchy_panel_plugins([Path(directory)])
+            launcher, candidates = resolve_launcher(
+                {
+                    "class": "org.quickshell", "initialClass": "org.quickshell",
+                    "title": "Omarchy Spotify", "initialTitle": "Omarchy Spotify",
+                },
+                {}, panels,
+            )
+            self.assertEqual(launcher, {
+                "kind": "omarchy-plugin", "pluginId": "quickshell.spotify"
+            })
+            self.assertEqual(candidates, [])
+
+    def test_quickshell_window_without_unique_panel_name_stays_unresolved(self):
+        panels = {
+            "one": OmarchyPanelPlugin("one", "Shared", "/one"),
+            "two": OmarchyPanelPlugin("two", "Shared", "/two"),
+        }
+        launcher, _ = resolve_launcher(
+            {"class": "org.quickshell", "title": "Shared"}, {}, panels
+        )
+        self.assertIsNone(launcher)
 
 
 if __name__ == "__main__":

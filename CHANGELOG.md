@@ -2,6 +2,12 @@
 
 All notable changes to Workspace Presets are documented here.
 
+## 1.2.1 - 2026-08-25
+
+- Recognize installed Omarchy panel plugins by their manifests and save a native shell-IPC launcher instead of requiring manual setup.
+- Automatically repair existing unresolved presets when a uniquely matching Omarchy panel is installed.
+- Validate panel launchers at restore time and summon them through the supported `omarchy-shell` interface.
+
 ## 1.2.0 - 2026-08-25
 
 - Add named preset groups with per-preset numbered-workspace assignments.

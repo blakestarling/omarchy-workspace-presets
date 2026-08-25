@@ -31,6 +31,7 @@ def parser() -> argparse.ArgumentParser:
     commands.add_parser("groups")
     commands.add_parser("capabilities")
     commands.add_parser("desktop-entries")
+    commands.add_parser("resolve-launchers")
 
     details = commands.add_parser("details")
     details.add_argument("--id", required=True)
@@ -119,6 +120,8 @@ def main(argv: list[str] | None = None) -> int:
             result = engine.capabilities()
         elif args.command == "desktop-entries":
             result = list_entries()
+        elif args.command == "resolve-launchers":
+            result = engine.resolve_unresolved_launchers()
         elif args.command == "details":
             result = store.get(args.id)
         elif args.command == "capture":
