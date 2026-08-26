@@ -172,7 +172,7 @@ class Hyprland:
         selector = self.lua_string(self.selector(window))
         self.lua_dispatch(f"hl.dsp.focus({{window={selector}}})")
 
-    def focus_for_layout(self, window: dict | str, *, timeout: float = 0.25) -> None:
+    def focus_for_layout(self, window: dict | str, *, timeout: float = 1.0) -> None:
         """Focus a window and wait until layout dispatchers can observe it.
 
         Hyprland publishes focus changes asynchronously to layout algorithms.

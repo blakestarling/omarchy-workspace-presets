@@ -409,6 +409,30 @@ class EngineRestoreTests(unittest.TestCase):
             ("float", "12", False),
         ])
         self.assertEqual(fake.actions[2][0], "scrolling-layout")
+
+    def test_snapshot_finalization_focuses_target_before_tiling(self):
+        fake = FakeHyprland()
+        engine = WorkspaceEngine(hyprland=fake)
+        snapshot = {
+            "source": {"workarea": {}},
+            "layout": {"name": "scrolling", "columns": [{"slots": ["first", "second"]}]},
+            "windows": [
+                {"id": "first", "state": {"floating": False}},
+                {"id": "second", "state": {"floating": False}},
+            ],
+            "groups": [],
+            "finalFocusSlotId": "second",
+        }
+        windows = {
+            "first": {"stableId": "11", "floating": True},
+            "second": {"stableId": "12", "floating": True},
+        }
+
+        engine._finalize_snapshot(snapshot, windows, {"workarea": {}})
+
+        layout_focus = fake.actions.index(("layout-focus", "11"))
+        first_tile = fake.actions.index(("float", "11", False))
+        self.assertLess(layout_focus, first_tile)
         self.assertNotIn(("layout-message", "consume"), fake.actions)
 
     def test_omarchy_panel_launcher_uses_shell_summon_ipc(self):

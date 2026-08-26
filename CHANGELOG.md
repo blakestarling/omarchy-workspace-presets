@@ -2,6 +2,11 @@
 
 All notable changes to Workspace Presets are documented here.
 
+## 1.8.1 - 2026-08-26
+
+- Synchronize every target workspace through an exact saved window before rebuilding groups or tiling, preventing startup-time focus publication races from leaving non-final workspaces floating.
+- Extend the focus barrier timeout for a busy login compositor while retaining immediate completion whenever Hyprland is already ready.
+
 ## 1.8.0 - 2026-08-26
 
 - Move manual preset and preset-group load warnings into a focused confirmation panel that opens after the main panel closes.

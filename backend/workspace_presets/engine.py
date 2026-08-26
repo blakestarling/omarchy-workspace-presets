@@ -839,6 +839,16 @@ class WorkspaceEngine:
     ) -> None:
         slots = snapshot["windows"]
         self.progress("layout", "Rebuilding groups and tiling topology", None)
+
+        # Workspace focus publication and the active layout dispatcher can be
+        # a frame apart, particularly while the session is still starting.
+        # Synchronize through an exact window on this target workspace before
+        # any grouping, float->tile transition, or layout message. Checking
+        # only the active workspace ID is not a sufficient compositor barrier.
+        order = target_order(snapshot["layout"])
+        if order:
+            self.hypr.focus_for_layout(slot_windows[order[0]])
+
         for group in snapshot.get("groups", []):
             members = [slot_windows[slot_id] for slot_id in group["members"]]
             representative = slot_windows[group["representativeSlotId"]]
