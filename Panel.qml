@@ -24,6 +24,10 @@ Panel {
   property string groupSearch: ""
   property string presetSort: "recent"
   property string groupSort: "recent"
+  // Delegate instances are recreated when group data is refreshed or sorted.
+  // Keep in-progress workspace edits outside the delegates so unrelated saves
+  // cannot discard what the user has typed.
+  property var assignmentDrafts: ({})
   readonly property var visiblePresets: filteredPresets()
   readonly property var visibleGroups: filteredGroups()
   readonly property var barIdentity: hostWidget || root
@@ -49,6 +53,7 @@ Panel {
     confirmPreset = null
     editingGroupId = ""
     confirmGroup = null
+    assignmentDrafts = ({})
     if (presetService) {
       presetService.selectedDetails = null
       if (presetService.pendingPreflight !== null) presetService.cancelPreflight()
@@ -62,7 +67,7 @@ Panel {
     var assignments = group && Array.isArray(group.assignments) ? group.assignments : []
     for (var index = 0; index < assignments.length; index++)
       if (assignments[index].presetId === presetId) return Number(assignments[index].workspace)
-    return 0
+    return -1
   }
 
   function currentGroup(groupId) {
@@ -75,6 +80,34 @@ Panel {
 
   function workspaceForCurrentGroup(groupId, presetId) {
     return workspaceFor(currentGroup(groupId), presetId)
+  }
+
+  function assignmentDraftKey(groupId, presetId) {
+    return String(groupId) + ":" + String(presetId)
+  }
+
+  function hasAssignmentDraft(groupId, presetId) {
+    return Object.prototype.hasOwnProperty.call(
+      assignmentDrafts, assignmentDraftKey(groupId, presetId)
+    )
+  }
+
+  function assignmentDraft(groupId, presetId) {
+    return assignmentDrafts[assignmentDraftKey(groupId, presetId)]
+  }
+
+  function setAssignmentDraft(groupId, presetId, value) {
+    var drafts = Object.assign({}, assignmentDrafts)
+    drafts[assignmentDraftKey(groupId, presetId)] = String(value)
+    assignmentDrafts = drafts
+  }
+
+  function clearAssignmentDraft(groupId, presetId) {
+    var key = assignmentDraftKey(groupId, presetId)
+    if (!Object.prototype.hasOwnProperty.call(assignmentDrafts, key)) return
+    var drafts = Object.assign({}, assignmentDrafts)
+    delete drafts[key]
+    assignmentDrafts = drafts
   }
 
   function compareName(left, right) {
@@ -982,14 +1015,31 @@ Panel {
                   TextField {
                     id: workspaceField
                     width: Style.space(72)
-                    placeholderText: "WS #"
+                    placeholderText: "0–9"
                     foreground: root.foreground
                     accent: Color.accent
+                    maximumLength: 1
+                    inputMethodHints: Qt.ImhDigitsOnly
+                    validator: IntValidator { bottom: 0; top: 9 }
                     function syncFromSavedAssignment() {
-                      text = assignmentRow.assignedWorkspace > 0
+                      var groupId = groupCard.modelData.id
+                      var presetId = assignmentRow.modelData.id
+                      var saved = assignmentRow.assignedWorkspace >= 0
                         ? String(assignmentRow.assignedWorkspace) : ""
+                      if (root.hasAssignmentDraft(groupId, presetId)) {
+                        var draft = root.assignmentDraft(groupId, presetId)
+                        // Once the backend refresh contains the submitted value,
+                        // it is no longer an in-progress draft.
+                        if (draft === saved) root.clearAssignmentDraft(groupId, presetId)
+                        text = draft
+                      } else {
+                        text = saved
+                      }
                     }
                     Component.onCompleted: syncFromSavedAssignment()
+                    onTextEdited: root.setAssignmentDraft(
+                      groupCard.modelData.id, assignmentRow.modelData.id, text
+                    )
                     onAccepted: assignButton.clicked()
                     Connections {
                       target: root.presetService
@@ -998,11 +1048,11 @@ Panel {
                   }
                   ActionButton {
                     id: assignButton
-                    label: assignmentRow.assignedWorkspace > 0 ? "Update" : "Assign"
+                    label: assignmentRow.assignedWorkspace >= 0 ? "Update" : "Assign"
                     foreground: root.foreground
                     fontFamily: root.fontFamily
                     enabled: root.presetService && !root.presetService.busy && assignmentRow.modelData.loadable
-                      && /^\d+$/.test(workspaceField.text.trim()) && Number(workspaceField.text.trim()) > 0
+                      && /^[0-9]$/.test(workspaceField.text.trim())
                     onClicked: root.presetService.assignPreset(
                       groupCard.modelData.id, assignmentRow.modelData.id, Number(workspaceField.text.trim())
                     )
@@ -1012,7 +1062,7 @@ Panel {
                     label: "Remove"
                     foreground: root.foreground
                     fontFamily: root.fontFamily
-                    visible: assignmentRow.assignedWorkspace > 0
+                    visible: assignmentRow.assignedWorkspace >= 0
                     enabled: root.presetService && !root.presetService.busy
                     onClicked: root.presetService.unassignPreset(groupCard.modelData.id, assignmentRow.modelData.id)
                   }

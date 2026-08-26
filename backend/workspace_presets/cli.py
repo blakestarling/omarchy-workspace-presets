@@ -142,8 +142,8 @@ def main(argv: list[str] | None = None) -> int:
                 updated, {item["id"]: item for item in store.list_summaries()}, store.startup_group_id()
             )
         elif args.command == "group-assign":
-            if args.workspace < 1:
-                raise WorkspacePresetsError("Workspace must be a positive number")
+            if not 0 <= args.workspace <= 9:
+                raise WorkspacePresetsError("Workspace must be numbered from 0 to 9")
             group = store.get_group(args.id)
             assignments = [
                 item for item in group["assignments"]

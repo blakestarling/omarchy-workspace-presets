@@ -492,7 +492,7 @@ class WorkspaceEngine:
                     launch_timeout=launch_timeout,
                 ))
         finally:
-            if original_workspace_id > 0:
+            if original_workspace_id >= 0:
                 self.hypr.focus_workspace(original_workspace_id)
         result = {
             "groupId": group_id, "name": check["group"]["name"],

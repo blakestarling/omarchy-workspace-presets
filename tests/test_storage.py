@@ -104,6 +104,20 @@ class PresetStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(ValidationError, "complete, loadable"):
             self.store.set_startup_group(draft["id"])
 
+    def test_group_workspaces_are_limited_to_zero_through_nine(self):
+        one = self.store.save_snapshot("One", self.snapshot)
+        zero = self.store.save_group(
+            "Zero", [{"presetId": one["id"], "workspace": 0}]
+        )
+        self.assertEqual(zero["assignments"][0]["workspace"], 0)
+        for workspace in (-1, 10):
+            with self.subTest(workspace=workspace):
+                with self.assertRaisesRegex(ValidationError, "0 to 9"):
+                    self.store.save_group(
+                        f"Invalid {workspace}",
+                        [{"presetId": one["id"], "workspace": workspace}],
+                    )
+
     def test_usage_metadata_is_backward_compatible_and_recorded(self):
         preset = self.store.save_snapshot("Used preset", self.snapshot)
         group = self.store.save_group("Used group", [])

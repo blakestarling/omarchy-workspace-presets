@@ -149,8 +149,12 @@ class PresetStore:
                 workspace = assignment.get("workspace")
                 if preset_id not in preset_ids:
                     raise ValidationError("Preset group references a missing preset")
-                if not isinstance(workspace, int) or isinstance(workspace, bool) or workspace < 1:
-                    raise ValidationError("Group workspaces must be positive numbers")
+                if (
+                    not isinstance(workspace, int)
+                    or isinstance(workspace, bool)
+                    or not 0 <= workspace <= 9
+                ):
+                    raise ValidationError("Group workspaces must be numbered from 0 to 9")
                 if workspace in workspaces:
                     raise ValidationError("A group can only assign one preset to each workspace")
                 if preset_id in assigned_presets:

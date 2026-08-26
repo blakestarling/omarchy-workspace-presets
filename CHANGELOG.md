@@ -2,6 +2,12 @@
 
 All notable changes to Workspace Presets are documented here.
 
+## 1.3.1 - 2026-08-25
+
+- Preserve in-progress workspace assignment edits when another preset or group mutation refreshes the panel.
+- Allow workspace 0 in preset groups and constrain every group target to the supported 0–9 range in both the panel and backend.
+- Return focus to workspace 0 after launching a preset group when it was the originally active workspace.
+
 ## 1.3.0 - 2026-08-25
 
 - Split preset and preset-group management into focused tabs.

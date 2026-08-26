@@ -107,7 +107,7 @@ Preset names are trimmed, non-empty, and case-insensitively unique.
 ### Preset groups
 
 1. Under **Preset groups**, enter a unique group name and choose **Create group**.
-2. For each preset you want in the group, enter its numbered workspace and choose **Assign**. A group allows one preset per workspace and one assignment per preset.
+2. For each preset you want in the group, enter a workspace from **0 through 9** and choose **Assign**. A group allows one preset per workspace and one assignment per preset. Unsaved workspace edits remain in place while other assignments or group settings are updated.
 3. Choose **Launch group**. The plugin validates every preset, launcher, and target workspace before it changes anything.
 4. If all target workspaces are empty, launch begins immediately. Otherwise, one confirmation shows the total windows that will receive normal close requests.
 
