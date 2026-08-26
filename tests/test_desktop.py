@@ -137,6 +137,51 @@ class DesktopEntryTests(unittest.TestCase):
             self.assertEqual(launcher, {"kind": "desktop", "desktopId": "editor.desktop"})
             self.assertGreaterEqual(candidates[0]["score"], 120)
 
+    def test_omarchy_webapps_with_spaced_desktop_ids_resolve_from_url_class(self):
+        with tempfile.TemporaryDirectory() as directory:
+            applications = Path(directory) / "applications"
+            applications.mkdir()
+            fixtures = {
+                "WhatsApp.desktop": (
+                    "WhatsApp", "https://web.whatsapp.com/",
+                    {
+                        "class": "chrome-web.whatsapp.com__-Default",
+                        "initialClass": "chrome-web.whatsapp.com__-Default",
+                        "title": "web.whatsapp.com",
+                        "initialTitle": "web.whatsapp.com_/",
+                        "executable": "chrome",
+                    },
+                ),
+                "Google Messages.desktop": (
+                    "Google Messages", "https://messages.google.com/web/conversations",
+                    {
+                        "class": "chrome-messages.google.com__web_conversations-Default",
+                        "initialClass": "chrome-messages.google.com__web_conversations-Default",
+                        "title": "Google Messages for web: Conversations",
+                        "initialTitle": "messages.google.com_/web/conversations",
+                        "executable": "chrome",
+                    },
+                ),
+            }
+            for filename, (name, url, _window) in fixtures.items():
+                (applications / filename).write_text(
+                    "[Desktop Entry]\nType=Application\n"
+                    f"Name={name}\nExec=omarchy-launch-webapp {url}\n"
+                )
+            with patch("workspace_presets.desktop._data_dirs", return_value=[Path(directory)]):
+                entries = scan_desktop_entries()
+
+            self.assertEqual(set(entries), set(fixtures))
+            for filename, (_name, url, window) in fixtures.items():
+                with self.subTest(filename=filename):
+                    launcher, candidates = resolve_launcher(window, entries)
+                    self.assertEqual(launcher, {
+                        "kind": "command",
+                        "argv": ["omarchy-launch-webapp", url],
+                    })
+                    self.assertEqual(candidates[0]["desktopId"], filename)
+                    self.assertIn("web app hostname", candidates[0]["reasons"])
+
     def test_ambiguous_matches_remain_unresolved(self):
         with tempfile.TemporaryDirectory() as directory:
             applications = Path(directory) / "applications"

@@ -9,10 +9,11 @@ import re
 import shlex
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
 
 FIELD_CODE = re.compile(r"^%[fFuUdDnNickvm]$")
-SAFE_DESKTOP_ID = re.compile(r"^[A-Za-z0-9_.+-]+\.desktop$")
+SAFE_DESKTOP_ID = re.compile(r"^[A-Za-z0-9_.+ -]+\.desktop$")
 TERMINAL_EXECUTABLES = {
     "alacritty",
     "foot",
@@ -38,6 +39,7 @@ class DesktopEntry:
     terminal: bool
     no_display: bool
     path: str
+    webapp_url: str = ""
 
     def public(self) -> dict:
         return {
@@ -117,6 +119,20 @@ def _executable_from_exec(value: str) -> str:
     return ""
 
 
+def _webapp_url_from_exec(value: str) -> str:
+    try:
+        argv = shlex.split(value)
+    except ValueError:
+        return ""
+    for index, token in enumerate(argv[:-1]):
+        if Path(token).name == "omarchy-launch-webapp":
+            candidate = argv[index + 1]
+            parsed = urlsplit(candidate)
+            if parsed.scheme in {"http", "https"} and parsed.hostname:
+                return candidate
+    return ""
+
+
 def scan_desktop_entries() -> dict[str, DesktopEntry]:
     """Return entries using the same user-over-system precedence as launchers."""
     entries: dict[str, DesktopEntry] = {}
@@ -151,6 +167,7 @@ def scan_desktop_entries() -> dict[str, DesktopEntry]:
                 terminal=section.getboolean("Terminal", fallback=False),
                 no_display=section.getboolean("NoDisplay", fallback=False),
                 path=str(path),
+                webapp_url=_webapp_url_from_exec(exec_value),
             )
     return entries
 
@@ -337,6 +354,26 @@ def score_entry(entry: DesktopEntry, window: dict) -> tuple[int, list[str]]:
     if entry_exec and entry_exec in {window_class, initial_class}:
         score += 70
         reasons.append("Exec/class")
+    if entry.webapp_url:
+        parsed = urlsplit(entry.webapp_url)
+        hostname = _norm(parsed.hostname)
+        class_text = " ".join((window_class, initial_class))
+        titles = " ".join((_norm(window.get("title")), _norm(window.get("initialTitle"))))
+        if hostname and (hostname in class_text or hostname in titles):
+            score += 140
+            reasons.append("web app hostname")
+            path_tokens = [
+                token.casefold()
+                for token in re.findall(r"[A-Za-z0-9]+", unquote(parsed.path))
+                if len(token) > 2
+            ]
+            searchable = class_text.replace("_", " ") + " " + titles
+            if path_tokens and all(token in searchable for token in path_tokens):
+                score += 40
+                reasons.append("web app path")
+            if _norm(entry.name) and _norm(entry.name) in titles:
+                score += 30
+                reasons.append("web app name")
     return score, reasons
 
 
@@ -373,7 +410,13 @@ def resolve_launcher(
     tied = [item for item in scored if item[0] == top_score]
     if len(tied) != 1:
         return None, candidates
-    return {"kind": "desktop", "desktopId": scored[0][1].desktop_id}, candidates
+    selected = scored[0][1]
+    if selected.webapp_url:
+        return {
+            "kind": "command",
+            "argv": ["omarchy-launch-webapp", selected.webapp_url],
+        }, candidates
+    return {"kind": "desktop", "desktopId": selected.desktop_id}, candidates
 
 
 def list_entries() -> list[dict]:

@@ -2,6 +2,12 @@
 
 All notable changes to Workspace Presets are documented here.
 
+## 1.6.2 - 2026-08-26
+
+- Resolve Omarchy web apps from their launch URLs and Chrome's URL-derived window classes.
+- Support desktop-entry filenames containing spaces, including Google Messages and WhatsApp.
+- Automatically repair existing draft presets with uniquely matched Omarchy web-app launchers.
+
 ## 1.6.1 - 2026-08-26
 
 - Close the management panel automatically as soon as a confirmed preset or preset-group load begins.
