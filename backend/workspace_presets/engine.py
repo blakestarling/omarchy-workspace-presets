@@ -914,8 +914,17 @@ class WorkspaceEngine:
                 self.hypr.layout_message(f"splitratio {float(operation['ratio']):.6f} exact")
             return
         order = target_order(layout)
+        # Launch waves finish in compositor arrival order. Anchor every tiling
+        # insertion to the previously restored target so arrival timing cannot
+        # leak into the final layout order.
+        previous = None
         for slot_id in order:
-            self.hypr.set_floating(windows[slot_id], False)
+            if previous is not None:
+                self.hypr.focus(previous)
+            window = windows[slot_id]
+            self.hypr.set_floating(window, False)
+            self.hypr.focus(window)
+            previous = window
         if name == "master":
             orientation = str(layout.get("orientation", "left"))
             if orientation in {"left", "right", "top", "bottom", "center"} and order:

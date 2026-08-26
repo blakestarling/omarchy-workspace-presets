@@ -2,6 +2,11 @@
 
 All notable changes to Workspace Presets are documented here.
 
+## 1.6.3 - 2026-08-26
+
+- Launch restored windows floating and without initial focus so concurrent arrival order cannot mutate the target tiling layout.
+- Anchor every retiled window to the previous saved window, making Monocle, Master, and Scrolling replay order deterministic.
+
 ## 1.6.2 - 2026-08-26
 
 - Resolve Omarchy web apps from their launch URLs and Chrome's URL-derived window classes.

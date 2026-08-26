@@ -115,7 +115,7 @@ The panel closes automatically when a confirmed preset or preset-group load begi
 
 Workspace Presets validates all launchers before closing anything. It then sends normal close requests to current-workspace applications and waits. If an application refuses to close—for example, because it is showing an unsaved-changes dialog—the restore stops and never force-kills it.
 
-After the workspace is clear, the backend launches saved applications through `uwsm-app` concurrently, tracks each newly created matching Hyprland stable ID, makes the windows temporarily floating, and rebuilds the saved layout deterministically. Windows with duplicate or overlapping classes launch in separate waves so they cannot be assigned to the wrong slot. Groups and compositor state are restored last. A launch timeout is reported as a failure, never as a successful partial restore.
+After the workspace is clear, the backend launches saved applications through `uwsm-app` concurrently, tracks each newly created matching Hyprland stable ID, and rebuilds the saved layout deterministically. Each window is born temporarily floating and without initial focus, preventing compositor arrival order from changing the target layout; windows are then retiled with explicit saved-order anchors. Windows with duplicate or overlapping classes launch in separate waves so they cannot be assigned to the wrong slot. Groups and compositor state are restored last. A launch timeout is reported as a failure, never as a successful partial restore.
 
 ### Manage
 

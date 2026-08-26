@@ -209,7 +209,8 @@ class Hyprland:
         self.repl(
             "hl.exec_cmd("
             f"{self.lua_string(command_text)},"
-            f"{{workspace={self.lua_string(workspace_rule)}}})"
+            f"{{workspace={self.lua_string(workspace_rule)},"
+            "float=true,no_initial_focus=true})"
         )
 
     def move_resize(self, window: dict | str, geometry: dict) -> None:

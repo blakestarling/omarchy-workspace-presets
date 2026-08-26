@@ -328,6 +328,32 @@ class EngineRestoreTests(unittest.TestCase):
             ["1"], ["2"],
         ])
 
+    def test_tiling_replay_anchors_each_window_in_saved_order(self):
+        fake = FakeHyprland()
+        engine = WorkspaceEngine(hyprland=fake)
+        windows = {
+            slot: {
+                "stableId": stable, "address": f"0x{stable}", "floating": True,
+            }
+            for slot, stable in (("first", "11"), ("second", "12"), ("third", "13"))
+        }
+
+        engine._restore_tiling(
+            {"name": "monocle", "order": ["first", "second", "third"]},
+            windows,
+        )
+
+        self.assertEqual(fake.actions, [
+            ("float", "11", False),
+            ("focus", "11"),
+            ("focus", "11"),
+            ("float", "12", False),
+            ("focus", "12"),
+            ("focus", "12"),
+            ("float", "13", False),
+            ("focus", "13"),
+        ])
+
     def test_omarchy_panel_launcher_uses_shell_summon_ipc(self):
         with patch("workspace_presets.engine.subprocess.Popen") as popen:
             WorkspaceEngine._launch({

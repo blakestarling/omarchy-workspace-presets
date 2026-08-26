@@ -93,6 +93,8 @@ class HyprlandLuaDispatcherTests(unittest.TestCase):
         lua = hypr.calls[0][0][2]
         self.assertIn("hl.exec_cmd(", lua)
         self.assertIn('workspace="8 silent"', lua)
+        self.assertIn("float=true", lua)
+        self.assertIn("no_initial_focus=true", lua)
         self.assertIn("--chdir=/home/blake/My Project", lua)
         self.assertIn("foot -e herdr", lua)
 
