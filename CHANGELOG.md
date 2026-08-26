@@ -2,6 +2,11 @@
 
 All notable changes to Workspace Presets are documented here.
 
+## 1.6.5 - 2026-08-26
+
+- Inset panel content so left and right `BorderSurface` strokes are no longer clipped by the scrolling viewport.
+- Hide progress for background startup and refresh commands, and delay foreground progress by 300 ms to eliminate brief “Working…” flashes.
+
 ## 1.6.4 - 2026-08-26
 
 - Keep automatic panel closing reliable when a plugin hot reload temporarily retains an older service instance.

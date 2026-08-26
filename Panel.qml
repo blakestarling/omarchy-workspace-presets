@@ -24,6 +24,7 @@ Panel {
   property string groupSearch: ""
   property string presetSort: "recent"
   property string groupSort: "recent"
+  property bool progressVisible: false
   // Delegate instances are recreated when group data is refreshed or sorted.
   // Keep in-progress workspace edits outside the delegates so unrelated saves
   // cannot discard what the user has typed.
@@ -34,6 +35,8 @@ Panel {
   readonly property var presetService: bar?.shell?.serviceFor(moduleName)
   readonly property int loadStartedSerial: presetService
     ? Number(presetService.loadStartedSerial || 0) : 0
+  readonly property bool foregroundBusy: presetService
+    && presetService.busy && isForegroundOperation(presetService.currentOperation)
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
@@ -66,6 +69,27 @@ Panel {
   function toggle() { opened ? close() : openFromHotkey() }
 
   onLoadStartedSerialChanged: if (root.opened && loadStartedSerial > 0) root.close()
+  onForegroundBusyChanged: {
+    if (foregroundBusy) progressDelay.restart()
+    else {
+      progressDelay.stop()
+      progressVisible = false
+    }
+  }
+
+  function isForegroundOperation(operation) {
+    return [
+      "capabilities", "resolve-launchers", "list", "groups", "startup-group",
+      "details", "desktop-entries", "preflight", "group-preflight"
+    ].indexOf(String(operation || "")) === -1
+  }
+
+  Timer {
+    id: progressDelay
+    interval: 300
+    repeat: false
+    onTriggered: if (root.foregroundBusy) root.progressVisible = true
+  }
 
   function workspaceFor(group, presetId) {
     var assignments = group && Array.isArray(group.assignments) ? group.assignments : []
@@ -293,7 +317,10 @@ Panel {
 
         Column {
           id: content
-          width: scroll.width
+          // BorderSurface strokes are centered on their bounds. Keep the
+          // content one pixel inside the clipped viewport on both sides.
+          x: 1
+          width: Math.max(0, scroll.width - 2)
           spacing: Style.space(12)
 
         Row {
@@ -459,7 +486,7 @@ Panel {
 
         BorderSurface {
           width: parent.width
-          visible: root.presetService && (root.presetService.busy || root.presetService.errorMessage !== "")
+          visible: root.presetService && (root.progressVisible || root.presetService.errorMessage !== "")
           implicitHeight: statusText.implicitHeight + Style.space(18)
           radius: Style.cornerRadius
           color: root.presetService && root.presetService.errorMessage !== ""
