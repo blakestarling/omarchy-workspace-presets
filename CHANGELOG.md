@@ -2,6 +2,12 @@
 
 All notable changes to Workspace Presets are documented here.
 
+## 1.7.2 - 2026-08-26
+
+- Remove the forced-floating launch rule that could reassert itself after a group advanced focus to another workspace.
+- Route new windows silently without initial focus, then temporarily detach identified stable IDs before deterministic layout replay.
+- Remove the delayed retry passes introduced in 1.7.1, restoring the faster finalization path.
+
 ## 1.7.1 - 2026-08-26
 
 - Verify tiled window state after applications finish their late startup surface updates.

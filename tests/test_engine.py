@@ -354,44 +354,6 @@ class EngineRestoreTests(unittest.TestCase):
             ("focus", "13"),
         ])
 
-    def test_finalize_rebuilds_layout_when_a_window_reasserts_floating(self):
-        class LateFloatingHyprland(FakeHyprland):
-            def apply_window_state(self, window, state):
-                super().apply_window_state(window, state)
-                if window["stableId"] == "12":
-                    window["floating"] = True
-
-        fake = LateFloatingHyprland()
-        fake.current = None
-        fake.spawned = [
-            {"stableId": "11", "floating": True},
-            {"stableId": "12", "floating": True},
-        ]
-        engine = WorkspaceEngine(hyprland=fake)
-        snapshot = {
-            "source": {"workarea": {}},
-            "layout": {"name": "monocle", "order": ["first", "second"]},
-            "windows": [
-                {"id": "first", "state": {"floating": False}},
-                {"id": "second", "state": {"floating": False}},
-            ],
-            "groups": [],
-            "finalFocusSlotId": "first",
-        }
-
-        with patch("workspace_presets.engine.time.sleep"):
-            engine._finalize_snapshot(
-                snapshot,
-                {"first": fake.spawned[0], "second": fake.spawned[1]},
-                fake.active_context(),
-            )
-
-        self.assertFalse(fake.spawned[0]["floating"])
-        self.assertFalse(fake.spawned[1]["floating"])
-        self.assertGreaterEqual(
-            fake.actions.count(("float", "12", False)), 2
-        )
-
     def test_omarchy_panel_launcher_uses_shell_summon_ipc(self):
         with patch("workspace_presets.engine.subprocess.Popen") as popen:
             WorkspaceEngine._launch({

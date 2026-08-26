@@ -198,7 +198,7 @@ class Hyprland:
     def exec_on_workspace(
         self, command: list[str], workspace_name: str, *, cwd: str | None = None
     ) -> None:
-        """Launch with a one-shot silent workspace rule tied to the new process."""
+        """Launch silently on a workspace without forcing persistent float state."""
         if not workspace_name:
             raise HyprlandError("Unsafe workspace name")
         launch_command = list(command)
@@ -210,7 +210,7 @@ class Hyprland:
             "hl.exec_cmd("
             f"{self.lua_string(command_text)},"
             f"{{workspace={self.lua_string(workspace_rule)},"
-            "float=true,no_initial_focus=true})"
+            "no_initial_focus=true})"
         )
 
     def move_resize(self, window: dict | str, geometry: dict) -> None:

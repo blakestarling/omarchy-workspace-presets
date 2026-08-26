@@ -854,65 +854,9 @@ class WorkspaceEngine:
         # Pin/fullscreen changes can hide or redirect focus, so apply them last.
         for slot in slots:
             self.hypr.apply_window_state(slot_windows[slot["id"]], slot.get("state", {}))
-        self._ensure_tiling_settled(snapshot["layout"], slot_windows)
         focus_id = snapshot.get("finalFocusSlotId")
         if focus_id in slot_windows:
             self.hypr.focus(slot_windows[focus_id])
-
-    def _ensure_tiling_settled(
-        self, layout: dict, windows: dict[str, dict]
-    ) -> None:
-        """Repair applications that reassert floating shortly after mapping.
-
-        New windows intentionally begin floating so concurrent compositor
-        arrival cannot alter the saved layout. Chromium web apps and a few
-        other clients can apply a late surface/state update after the first
-        tiling dispatch. Verify after that startup window; if any saved tiled
-        client escaped, reset the complete tiled set and replay it from the
-        same deterministic baseline.
-        """
-        order = target_order(layout)
-        if not order:
-            return
-
-        def mismatches() -> list[str]:
-            result = []
-            for slot_id in order:
-                window = windows[slot_id]
-                stable_id = str(window.get("stableId", ""))
-                current = self.hypr.find_window(stable_id)
-                if current is None:
-                    raise RestoreError(
-                        "A restored window disappeared while its layout was being finalized",
-                        details={"slotId": slot_id, "stableId": stable_id},
-                    )
-                if bool(current.get("floating", False)):
-                    result.append(slot_id)
-            return result
-
-        # The first delay covers late app-id/title/surface commits. The second
-        # is a stability check after a corrective replay and also catches a
-        # slower client without delaying the normal launch path excessively.
-        for delay in (0.30, 0.15):
-            time.sleep(delay)
-            escaped = mismatches()
-            if not escaped:
-                continue
-            self.progress(
-                "layout",
-                f"Retiling {len(escaped)} window(s) that changed state during startup",
-                {"slotIds": escaped},
-            )
-            for slot_id in order:
-                self.hypr.set_floating(windows[slot_id], True)
-            self._restore_tiling(layout, windows)
-
-        remaining = mismatches()
-        if remaining:
-            raise RestoreError(
-                "One or more applications would not remain tiled",
-                details={"slotIds": remaining},
-            )
 
     @staticmethod
     def _launcher_command(launcher: dict) -> list[str]:
