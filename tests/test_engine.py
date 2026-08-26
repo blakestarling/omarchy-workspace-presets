@@ -43,6 +43,7 @@ class FakeHyprland:
     def create_group(self, *args, **kwargs): self.actions.append(("group",))
     def apply_window_state(self, window, state): self.actions.append(("state", window["stableId"]))
     def focus(self, window): self.actions.append(("focus", window["stableId"]))
+    def focus_for_layout(self, window): self.focus(window)
     def focus_workspace(self, workspace): self.actions.append(("focus-workspace", str(workspace)))
 
 

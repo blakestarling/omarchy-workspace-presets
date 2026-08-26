@@ -2,6 +2,12 @@
 
 All notable changes to Workspace Presets are documented here.
 
+## 1.7.3 - 2026-08-26
+
+- Synchronize focus before issuing layout-dependent replay commands so Hyprland operates on the intended stable window rather than the previously active node or scrolling column.
+- Restore multi-window Scrolling columns reliably instead of leaving every window in a separate column.
+- Apply the same focus barrier to Dwindle anchors and Master layout controls without adding fixed retry delays.
+
 ## 1.7.2 - 2026-08-26
 
 - Remove the forced-floating launch rule that could reassert itself after a group advanced focus to another workspace.

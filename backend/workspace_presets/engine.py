@@ -907,10 +907,10 @@ class WorkspaceEngine:
                 if operation["op"] == "add":
                     self.hypr.set_floating(window, False)
                     continue
-                self.hypr.focus(windows[operation["anchor"]])
+                self.hypr.focus_for_layout(windows[operation["anchor"]])
                 self.hypr.layout_message(f"preselect {operation['direction']}")
                 self.hypr.set_floating(window, False)
-                self.hypr.focus(window)
+                self.hypr.focus_for_layout(window)
                 self.hypr.layout_message(f"splitratio {float(operation['ratio']):.6f} exact")
             return
         order = target_order(layout)
@@ -920,7 +920,7 @@ class WorkspaceEngine:
         previous = None
         for slot_id in order:
             if previous is not None:
-                self.hypr.focus(previous)
+                self.hypr.focus_for_layout(previous)
             window = windows[slot_id]
             self.hypr.set_floating(window, False)
             self.hypr.focus(window)
@@ -928,14 +928,14 @@ class WorkspaceEngine:
         if name == "master":
             orientation = str(layout.get("orientation", "left"))
             if orientation in {"left", "right", "top", "bottom", "center"} and order:
-                self.hypr.focus(windows[order[0]])
+                self.hypr.focus_for_layout(windows[order[0]])
                 self.hypr.layout_message(f"orientation{orientation}")
             masters = list(layout.get("masters", []))
             for slot_id in masters[1:]:
-                self.hypr.focus(windows[slot_id])
+                self.hypr.focus_for_layout(windows[slot_id])
                 self.hypr.layout_message("addmaster")
             if order:
-                self.hypr.focus(windows[masters[0] if masters else order[0]])
+                self.hypr.focus_for_layout(windows[masters[0] if masters else order[0]])
                 self.hypr.layout_message(f"mfact {float(layout.get('masterFactor', 0.55)):.6f} exact")
             return
         if name == "scrolling":
@@ -943,14 +943,14 @@ class WorkspaceEngine:
                 members = list(column.get("slots", []))
                 if not members:
                     continue
-                self.hypr.focus(windows[members[0]])
+                self.hypr.focus_for_layout(windows[members[0]])
                 for _ in members[1:]:
                     self.hypr.layout_message("consume")
-                self.hypr.focus(windows[members[0]])
+                self.hypr.focus_for_layout(windows[members[0]])
                 self.hypr.layout_message(f"colresize {float(column.get('width', 0.5)):.6f}")
             offset = float(layout.get("tapeOffset", 0))
             if order and abs(offset) >= 1:
-                self.hypr.focus(windows[order[0]])
+                self.hypr.focus_for_layout(windows[order[0]])
                 self.hypr.layout_message(f"move {offset:.2f}")
             return
         if name == "monocle":

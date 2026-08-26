@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from workspace_presets.hyprland import Hyprland
 from workspace_presets.errors import HyprlandError
@@ -42,6 +43,27 @@ class RecordingHyprland(Hyprland):
 
 
 class HyprlandLuaDispatcherTests(unittest.TestCase):
+    def test_layout_focus_waits_until_hyprland_reports_the_target(self):
+        class DelayedFocusHyprland(Hyprland):
+            def __init__(self):
+                super().__init__()
+                self.focused = None
+                self.reads = 0
+
+            def focus(self, window):
+                self.focused = window
+
+            def active_window(self):
+                self.reads += 1
+                return {"stableId": "old" if self.reads == 1 else "42"}
+
+        hypr = DelayedFocusHyprland()
+        with patch("workspace_presets.hyprland.time.sleep"):
+            hypr.focus_for_layout({"stableId": "42"})
+
+        self.assertEqual(hypr.focused, {"stableId": "42"})
+        self.assertEqual(hypr.reads, 2)
+
     def test_only_positive_hyprland_workspace_ids_are_safe_focus_targets(self):
         hypr = RecordingHyprland()
 

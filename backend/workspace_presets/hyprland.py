@@ -169,6 +169,32 @@ class Hyprland:
         selector = self.lua_string(self.selector(window))
         self.lua_dispatch(f"hl.dsp.focus({{window={selector}}})")
 
+    def focus_for_layout(self, window: dict | str, *, timeout: float = 0.25) -> None:
+        """Focus a window and wait until layout dispatchers can observe it.
+
+        Hyprland publishes focus changes asynchronously to layout algorithms.
+        A following layout command can otherwise operate on the previously
+        active column or node even though the focus dispatcher succeeded.
+        """
+        selector = self.selector(window)
+        self.focus(window)
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            active = self.active_window()
+            if active is not None:
+                if selector.startswith("stableid:") and str(
+                    active.get("stableId", "")
+                ) == selector.removeprefix("stableid:"):
+                    return
+                if selector.startswith("address:") and str(
+                    active.get("address", "")
+                ) == selector.removeprefix("address:"):
+                    return
+            time.sleep(0.005)
+        raise HyprlandError(
+            f"Could not focus {selector} before applying its saved layout"
+        )
+
     def focus_workspace(self, workspace: str | int) -> None:
         value = str(workspace)
         if not value.isdigit() or int(value) < 1:
