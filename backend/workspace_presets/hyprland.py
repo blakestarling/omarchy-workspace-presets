@@ -13,7 +13,10 @@ from pathlib import Path
 from .errors import HyprlandError, UnsupportedError
 
 
-STABLE_ID = re.compile(r"^[0-9]+$")
+# Hyprland serializes stable IDs as hexadecimal without a 0x prefix. IDs can
+# look numeric early in a session and later contain a-f, so accepting decimal
+# only made layout capture fail intermittently as windows were opened.
+STABLE_ID = re.compile(r"^[0-9a-fA-F]+$")
 ADDRESS = re.compile(r"^0x[0-9a-fA-F]+$")
 TAG = re.compile(r"^[A-Za-z0-9_-]+$")
 

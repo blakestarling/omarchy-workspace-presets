@@ -2,6 +2,11 @@
 
 All notable changes to Workspace Presets are documented here.
 
+## 1.7.6 - 2026-08-26
+
+- Accept Hyprland's hexadecimal stable window IDs when capturing layout metadata, preventing Scrolling presets from falling back to nondeterministic client enumeration order.
+- Use hexadecimal stable IDs directly for window selectors and cover metadata capture with a regression test.
+
 ## 1.7.5 - 2026-08-26
 
 - Make capture read-only by removing the pseudotile toggle probe that could visibly recalculate tiled windows while a preset was being saved.
