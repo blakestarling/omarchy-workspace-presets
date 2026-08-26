@@ -45,7 +45,8 @@ class FakeHyprland:
     def focus(self, window): self.actions.append(("focus", window["stableId"]))
     def focus_for_layout(self, window): self.actions.append(("layout-focus", window["stableId"]))
     def layout_message(self, command): self.actions.append(("layout-message", command))
-    def restore_scrolling_layout(self, layout, windows): self.actions.append(("scrolling-layout", layout, windows))
+    def restore_scrolling_layout(self, layout, windows, workarea): self.actions.append(("scrolling-layout", layout, windows, workarea))
+    def restore_scrolling_view(self, layout, windows, focus, workarea): self.actions.append(("scrolling-view", focus and focus["stableId"]))
     def focus_workspace(self, workspace): self.actions.append(("focus-workspace", str(workspace)))
 
 
@@ -89,6 +90,32 @@ class EngineRestoreTests(unittest.TestCase):
             check = engine.preflight(preset["id"])
             self.assertEqual(len(check["conflicts"]), 1)
             self.assertFalse(check["requiresConfirmation"])
+
+    def test_capture_never_probes_or_mutates_live_pseudo_state(self):
+        class CaptureHyprland(FakeHyprland):
+            def layout_metadata(self, clients):
+                return {}
+
+            def probe_pseudo(self, window):
+                raise AssertionError("capture must remain read-only")
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = PresetStore(Path(directory) / "presets.json")
+            fake = CaptureHyprland()
+            engine = WorkspaceEngine(store=store, hyprland=fake)
+            launcher = {"kind": "command", "argv": ["true"]}
+            with (
+                patch("workspace_presets.engine.scan_desktop_entries", return_value={}),
+                patch("workspace_presets.engine.scan_omarchy_panel_plugins", return_value={}),
+                patch("workspace_presets.engine.process_executable", return_value=""),
+                patch("workspace_presets.engine.terminal_process_launcher", return_value=None),
+                patch("workspace_presets.engine.resolve_launcher", return_value=(launcher, [])),
+            ):
+                saved = engine.capture("Read only")
+
+            snapshot = store.get(saved["id"])["snapshot"]
+            self.assertFalse(snapshot["windows"][0]["state"]["pseudo"])
+            self.assertEqual(fake.actions, [])
 
     def test_group_capture_maps_lua_hex_stable_ids_to_slots(self):
         metadata = {

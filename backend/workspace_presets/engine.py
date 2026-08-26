@@ -160,7 +160,9 @@ class WorkspaceEngine:
                         "fullscreen": int(client.get("fullscreen", 0)),
                         "fullscreenClient": int(client.get("fullscreenClient", 0)),
                         "tags": list(client.get("tags", [])),
-                        "pseudo": self.hypr.probe_pseudo(client),
+                        # Hyprland 0.56 does not expose target pseudo state to
+                        # read-only IPC. Never toggle live state during capture.
+                        "pseudo": False,
                     },
                     "focusHistoryID": int(client.get("focusHistoryID", 0)),
                 }
@@ -222,6 +224,12 @@ class WorkspaceEngine:
                 )
                 origin = context["workarea"][primary_axis]
                 options["tapeOffset"] = leading - origin
+            options["primaryExtent"] = context["workarea"][
+                "width" if primary_axis == "x" else "height"
+            ]
+            options["secondaryExtent"] = context["workarea"][
+                "height" if primary_axis == "x" else "width"
+            ]
         layout = capture_layout(layout_name, targets, metadata, options=options)
         focused = min(windows, key=lambda item: item["focusHistoryID"])
         snapshot = {
@@ -841,7 +849,9 @@ class WorkspaceEngine:
                 locked=bool(group.get("locked", False)),
             )
 
-        self._restore_tiling(snapshot["layout"], slot_windows)
+        self._restore_tiling(
+            snapshot["layout"], slot_windows, context.get("workarea", {})
+        )
         source_workarea = snapshot.get("source", {}).get("workarea", {})
         for slot in slots:
             window = slot_windows[slot["id"]]
@@ -855,7 +865,12 @@ class WorkspaceEngine:
         for slot in slots:
             self.hypr.apply_window_state(slot_windows[slot["id"]], slot.get("state", {}))
         focus_id = snapshot.get("finalFocusSlotId")
-        if focus_id in slot_windows:
+        if snapshot["layout"].get("name") == "scrolling":
+            focus_window = slot_windows.get(focus_id)
+            self.hypr.restore_scrolling_view(
+                snapshot["layout"], slot_windows, focus_window, context.get("workarea", {})
+            )
+        elif focus_id in slot_windows:
             self.hypr.focus(slot_windows[focus_id])
 
     @staticmethod
@@ -899,7 +914,12 @@ class WorkspaceEngine:
         except OSError as exc:
             raise LaunchError(f"Could not start {self._launcher_command(launcher)[-1]!r}: {exc}") from exc
 
-    def _restore_tiling(self, layout: dict, windows: dict[str, dict]) -> None:
+    def _restore_tiling(
+        self,
+        layout: dict,
+        windows: dict[str, dict],
+        workarea: dict | None = None,
+    ) -> None:
         name = layout["name"]
         if name == "dwindle":
             for operation in dwindle_replay(layout.get("tree")):
@@ -940,7 +960,7 @@ class WorkspaceEngine:
                 self.hypr.layout_message(f"mfact {float(layout.get('masterFactor', 0.55)):.6f} exact")
             return
         if name == "scrolling":
-            self.hypr.restore_scrolling_layout(layout, windows)
+            self.hypr.restore_scrolling_layout(layout, windows, workarea or {})
             return
         if name == "monocle":
             return

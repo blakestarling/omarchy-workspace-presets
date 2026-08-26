@@ -209,13 +209,21 @@ def capture_layout(
             },
         }
     if name == "scrolling":
+        direction = str(options.get("direction", "right"))
+        horizontal = direction in {"left", "right"}
+        secondary_extent = max(float(options.get("secondaryExtent", 0)), 1)
         columns: dict[int, list[dict]] = defaultdict(list)
         widths: dict[int, float] = {}
         for item in targets:
             meta = metadata.get(str(item.get("stableId")), {})
             column = int(meta.get("columnIndex", len(columns)))
             index = int(meta.get("indexInColumn", 0))
-            columns[column].append({"slotId": item["slotId"], "index": index})
+            secondary_size = item["rect"].h if horizontal else item["rect"].w
+            columns[column].append({
+                "slotId": item["slotId"],
+                "index": index,
+                "secondaryFraction": secondary_size / secondary_extent,
+            })
             widths[column] = float(meta.get("columnWidth", 0.5))
         saved_columns = []
         for index in sorted(columns):
@@ -224,13 +232,19 @@ def capture_layout(
                 {
                     "width": widths[index],
                     "slots": [member["slotId"] for member in members],
+                    "sizes": {
+                        member["slotId"]: member["secondaryFraction"]
+                        for member in members
+                    },
                 }
             )
         return {
             "name": name,
-            "direction": str(options.get("direction", "right")),
+            "direction": direction,
             "columns": saved_columns,
             "tapeOffset": float(options.get("tapeOffset", 0)),
+            "tapeOffsetNormalized": float(options.get("tapeOffset", 0))
+            / max(float(options.get("primaryExtent", 0)), 1),
         }
     if name == "monocle":
         ordered = sorted(targets, key=lambda item: int(item.get("focusHistoryID", 0)), reverse=True)

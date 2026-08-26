@@ -2,6 +2,12 @@
 
 All notable changes to Workspace Presets are documented here.
 
+## 1.7.5 - 2026-08-26
+
+- Make capture read-only by removing the pseudotile toggle probe that could visibly recalculate tiled windows while a preset was being saved.
+- Capture and restore each window's secondary-axis size inside multi-window Scrolling columns.
+- Save Scrolling tape position proportionally and restore its absolute leading edge after final focus, preventing focus-driven viewport drift.
+
 ## 1.7.4 - 2026-08-26
 
 - Replay each Scrolling workspace topology in one compositor transaction so concurrently loaded preset-group workspaces cannot redirect one another's focus-dependent layout commands.

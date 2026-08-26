@@ -108,13 +108,18 @@ class HyprlandLuaDispatcherTests(unittest.TestCase):
         hypr.restore_scrolling_layout(
             {
                 "name": "scrolling",
-                "columns": [{"width": 0.5, "slots": ["one", "two"]}],
+                "columns": [{
+                    "width": 0.5,
+                    "slots": ["one", "two"],
+                    "sizes": {"one": 0.7, "two": 0.3},
+                }],
                 "tapeOffset": 12,
             },
             {
                 "one": {"stableId": "11"},
                 "two": {"stableId": "12"},
             },
+            {"width": 1000, "height": 800},
         )
 
         self.assertEqual(len(hypr.calls), 1)
@@ -125,9 +130,33 @@ class HyprlandLuaDispatcherTests(unittest.TestCase):
         self.assertIn("hl.dsp.window.swap({window=sel,target=other})", lua)
         self.assertEqual(lua.count("hl.dsp.layout('consume')"), 1)
         self.assertIn('hl.dsp.layout("colresize 0.500000")', lua)
-        self.assertIn('hl.dsp.layout("move 12.00")', lua)
+        self.assertIn("x=sized.size.x,y=560", lua)
+        self.assertIn("Scrolling replay did not produce the saved topology", lua)
+        self.assertNotIn("hl.dsp.layout('move ", lua)
         self.assertIn("hl.dsp.focus({window=oldsel})", lua)
         self.assertIn("hl.dsp.cursor.move", lua)
+
+    def test_scrolling_view_restores_saved_leading_edge_after_focus(self):
+        hypr = RecordingHyprland()
+        hypr.restore_scrolling_view(
+            {
+                "name": "scrolling",
+                "direction": "right",
+                "columns": [{"slots": ["one", "two"]}],
+                "tapeOffsetNormalized": -0.25,
+            },
+            {
+                "one": {"stableId": "11"},
+                "two": {"stableId": "12"},
+            },
+            {"stableId": "12"},
+            {"x": 10, "width": 1000, "height": 800},
+        )
+
+        lua = hypr.calls[0][0][2]
+        self.assertIn('hl.dsp.focus({window="stableid:12"})', lua)
+        self.assertIn("local delta=-240.0-leading", lua)
+        self.assertIn("hl.dsp.layout('move '..tostring(delta))", lua)
 
     def test_exec_routes_new_windows_to_a_workspace_silently(self):
         hypr = RecordingHyprland()

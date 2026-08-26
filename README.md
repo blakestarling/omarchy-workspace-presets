@@ -11,11 +11,11 @@ This is a native Omarchy Quattro plugin: the bar widget and management panel run
 - Application window count and identity
 - Dwindle trees and split ratios
 - Master orientation, master/stack membership, and master factor
-- Scrolling columns, column membership, widths, and tape position
+- Scrolling columns, column membership, column widths, row sizes, and tape position
 - Monocle ordering and final focus
 - Floating/tiled state and floating geometry
 - Window groups, member order, active member, and lock state
-- Fullscreen/maximized, pseudotile, pinning, and static tags
+- Fullscreen/maximized, pinning, and static tags
 - Duplicate windows with the same class, tracked as independent slots
 - Omarchy shell panels discovered from their plugin manifests
 - Explicit terminal programs and their working directories, including Herdr and Omarchy's Docker View
@@ -212,7 +212,7 @@ Common restore failures:
 - **Unsupported layout or special workspace:** switch the active normal workspace to one of the four supported built-in layouts before saving/loading.
 - **Floating window moved after a monitor change:** exact pixels are used only when work-area size and scale match; otherwise geometry is normalized and clamped to the current monitor.
 
-Hyprland 0.56 does not expose pseudotile state in its JSON client data. During capture the backend briefly forces pseudotile on and off, compares goal geometry, and immediately returns the window to its detected state. A state that produces no geometry difference is treated as visually equivalent.
+Hyprland 0.56 does not expose pseudotile state through read-only window IPC. Workspace Presets therefore leaves live windows untouched during capture and records pseudotile as disabled. This avoids changing the workspace merely by saving it; pseudotile capture can be added when Hyprland exposes that state safely.
 
 ## Development
 

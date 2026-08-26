@@ -64,8 +64,16 @@ class LayoutTests(unittest.TestCase):
                 "2": {"columnIndex": 1, "columnWidth": 0.6, "indexInColumn": 0},
                 "3": {"columnIndex": 1, "columnWidth": 0.6, "indexInColumn": 1},
             },
+            options={
+                "direction": "right",
+                "primaryExtent": 1000,
+                "secondaryExtent": 1000,
+                "tapeOffset": -250,
+            },
         )
         self.assertEqual(scrolling["columns"][1]["slots"], ["b", "c"])
+        self.assertEqual(scrolling["columns"][1]["sizes"], {"b": 0.5, "c": 0.5})
+        self.assertEqual(scrolling["tapeOffsetNormalized"], -0.25)
 
 
 if __name__ == "__main__":

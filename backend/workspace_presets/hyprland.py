@@ -256,7 +256,7 @@ class Hyprland:
         self.lua_dispatch(f"hl.dsp.layout({self.lua_string(message)})")
 
     def restore_scrolling_layout(
-        self, layout: dict, windows: dict[str, dict]
+        self, layout: dict, windows: dict[str, dict], workarea: dict
     ) -> None:
         """Replay Scrolling topology as one compositor-side transaction.
 
@@ -269,6 +269,7 @@ class Hyprland:
             {
                 "width": float(column.get("width", 0.5)),
                 "slots": list(column.get("slots", [])),
+                "sizes": dict(column.get("sizes", {})),
             }
             for column in layout.get("columns", [])
             if column.get("slots")
@@ -278,9 +279,23 @@ class Hyprland:
         if not selectors:
             return
 
+        expected_columns: list[int] = []
+        expected_rows: list[int] = []
+        for column_index, column in enumerate(columns):
+            for row_index, _slot in enumerate(column["slots"]):
+                expected_columns.append(column_index)
+                expected_rows.append(row_index)
+
         lua_selectors = "{" + ",".join(self.lua_string(value) for value in selectors) + "}"
+        lua_columns = "{" + ",".join(str(value) for value in expected_columns) + "}"
+        lua_rows = "{" + ",".join(str(value) for value in expected_rows) + "}"
         operations: list[str] = []
         cursor = 0
+        direction = str(layout.get("direction", "right"))
+        horizontal = direction in {"left", "right"}
+        secondary_extent = float(
+            workarea.get("height" if horizontal else "width", 0)
+        )
         for column in columns:
             anchor = self.lua_string(selectors[cursor])
             width_command = self.lua_string(
@@ -292,23 +307,29 @@ class Hyprland:
                 for _ in column["slots"][1:]
             )
             operations.append(f"run(hl.dsp.layout({width_command}))")
+            if secondary_extent > 0:
+                for slot_offset, slot_id in enumerate(column["slots"][:-1]):
+                    fraction = column["sizes"].get(slot_id)
+                    if fraction is None:
+                        continue
+                    selector = self.lua_string(selectors[cursor + slot_offset])
+                    desired = max(1, round(float(fraction) * secondary_extent))
+                    if horizontal:
+                        size = f"x=sized.size.x,y={desired}"
+                    else:
+                        size = f"x={desired},y=sized.size.y"
+                    operations.append(
+                        "do local sized=window("
+                        f"{selector}); run(hl.dsp.window.resize({{{size},relative=false,window={selector}}})) end"
+                    )
             cursor += len(column["slots"])
-
-        offset = float(layout.get("tapeOffset", 0))
-        if abs(offset) >= 1:
-            operations.append(
-                f"run(hl.dsp.focus({{window={self.lua_string(selectors[0])}}}))"
-            )
-            operations.append(
-                f"run(hl.dsp.layout({self.lua_string(f'move {offset:.2f}')}))"
-            )
 
         body = "; ".join(operations)
         code = (
             "local old=hl.get_active_window(); local oldsel=old and string.format('stableid:%x',old.stable_id) or nil; "
             "local cursor=hl.get_cursor_pos(); "
             "local function run(d) local r=hl.dispatch(d); if type(r)=='table' and r.ok==false then error(tostring(r.error)) end end; "
-            f"local sels={lua_selectors}; "
+            f"local sels={lua_selectors}; local expectedcols={lua_columns}; local expectedrows={lua_rows}; "
             "local function window(sel) local w=hl.get_window(sel); if not w then error('saved window disappeared during Scrolling replay') end; return w end; "
             "local ok,err=pcall(function() "
             "for i,sel in ipairs(sels) do local desired=window(sel); local col=desired.layout and desired.layout.column; "
@@ -317,10 +338,46 @@ class Hyprland:
             "if w.layout and w.layout.column and w.layout.column.index==i-1 then other=candidate; break end end; "
             "if not other then error('could not locate Scrolling column during replay') end; "
             "run(hl.dsp.window.swap({window=sel,target=other})) end end; "
-            f"{body} end); "
+            f"{body}; "
+            "for i,sel in ipairs(sels) do local w=window(sel); local l=w.layout; local c=l and l.column; "
+            "if not c or c.index~=expectedcols[i] or l.index_in_column~=expectedrows[i] then "
+            "error('Scrolling replay did not produce the saved topology') end end end); "
             "if oldsel and hl.get_window(oldsel) then hl.dispatch(hl.dsp.focus({window=oldsel})) end; "
             "if cursor then hl.dispatch(hl.dsp.cursor.move({x=cursor.x,y=cursor.y})) end; "
             "if not ok then error(err) end"
+        )
+        self.repl(code)
+
+    def restore_scrolling_view(
+        self,
+        layout: dict,
+        windows: dict[str, dict],
+        focus_window: dict | None,
+        workarea: dict,
+    ) -> None:
+        columns = [column for column in layout.get("columns", []) if column.get("slots")]
+        order = [slot for column in columns for slot in column["slots"]]
+        selectors = [self.selector(windows[slot]) for slot in order]
+        if not selectors:
+            return
+        target = self.selector(focus_window or windows[order[0]])
+        direction = str(layout.get("direction", "right"))
+        axis = "x" if direction in {"left", "right"} else "y"
+        primary_extent = float(workarea.get("width" if axis == "x" else "height", 0))
+        if "tapeOffsetNormalized" in layout and primary_extent > 0:
+            desired = float(layout["tapeOffsetNormalized"]) * primary_extent
+        else:
+            desired = float(layout.get("tapeOffset", 0))
+        origin = float(workarea.get(axis, 0))
+        lua_selectors = "{" + ",".join(self.lua_string(value) for value in selectors) + "}"
+        code = (
+            "local cursor=hl.get_cursor_pos(); "
+            "local function run(d) local r=hl.dispatch(d); if type(r)=='table' and r.ok==false then error(tostring(r.error)) end end; "
+            f"local sels={lua_selectors}; run(hl.dsp.focus({{window={self.lua_string(target)}}})); "
+            f"local leading=nil; for _,sel in ipairs(sels) do local w=hl.get_window(sel); local at=w and w.at; local value=at and at.{axis}; "
+            "if value and (not leading or value<leading) then leading=value end end; "
+            f"if leading then local delta={desired + origin}-leading; if math.abs(delta)>=0.5 then run(hl.dsp.layout('move '..tostring(delta))) end end; "
+            "if cursor then hl.dispatch(hl.dsp.cursor.move({x=cursor.x,y=cursor.y})) end"
         )
         self.repl(code)
 
@@ -357,25 +414,6 @@ class Hyprland:
         self.lua_dispatch(
             f"hl.dsp.window.pseudo({{action={self.lua_string(action)},window={selector}}})"
         )
-
-    def probe_pseudo(self, window: dict) -> bool:
-        if window.get("floating"):
-            return False
-        stable_id = str(window.get("stableId", ""))
-        if not STABLE_ID.fullmatch(stable_id):
-            return False
-        original = (tuple(window.get("at", [])), tuple(window.get("size", [])))
-        self.apply_pseudo(window, True)
-        time.sleep(0.035)
-        enabled = self.find_window(stable_id)
-        self.apply_pseudo(window, False)
-        time.sleep(0.035)
-        disabled = self.find_window(stable_id)
-        enabled_geometry = (tuple(enabled.get("at", [])), tuple(enabled.get("size", []))) if enabled else original
-        disabled_geometry = (tuple(disabled.get("at", [])), tuple(disabled.get("size", []))) if disabled else original
-        was_enabled = original == enabled_geometry and enabled_geometry != disabled_geometry
-        self.apply_pseudo(window, was_enabled)
-        return was_enabled
 
     def apply_window_state(self, window: dict, state: dict) -> None:
         self.apply_pseudo(window, bool(state.get("pseudo", False)))
