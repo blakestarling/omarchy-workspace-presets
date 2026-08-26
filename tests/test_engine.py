@@ -178,8 +178,10 @@ class EngineRestoreTests(unittest.TestCase):
                 })
 
             with patch.object(engine, "_launch", side_effect=spawn):
+                check = engine.preflight(preset["id"])
                 result = engine.load(
-                    preset["id"], expected_workspace_id=1, launch_timeout=0.2
+                    preset["id"], expected_workspace_id=1,
+                    expected_token=check["token"], launch_timeout=0.2
                 )
             self.assertEqual(result["windowCount"], 1)
             self.assertIn(("close", "1"), fake.actions)
@@ -208,8 +210,79 @@ class EngineRestoreTests(unittest.TestCase):
             engine.capabilities = lambda: {"ready": True}
 
             with self.assertRaisesRegex(Exception, "active workspace changed"):
-                engine.load(preset["id"], expected_workspace_id=9)
+                engine.load(
+                    preset["id"], expected_workspace_id=9,
+                    expected_token="not-reached",
+                )
             self.assertNotIn(("close", "1"), fake.actions)
+
+    def test_empty_preflight_never_closes_a_window_that_appears_before_replace(self):
+        class LateWindowHyprland(FakeHyprland):
+            def __init__(self):
+                super().__init__()
+                self.current = None
+                self.context_calls = 0
+
+            def active_context(self):
+                self.context_calls += 1
+                # The third context read is load()'s final workspace guard,
+                # after its fresh preflight has already succeeded.
+                if self.context_calls == 3:
+                    self.current = {
+                        "address": "0x9",
+                        "stableId": "9",
+                        "mapped": True,
+                        "workspace": {"id": 1, "name": "1"},
+                        "class": "attacker",
+                        "initialClass": "attacker",
+                        "title": "Late window",
+                        "floating": False,
+                    }
+                return super().active_context()
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = PresetStore(Path(directory) / "presets.json")
+            preset = store.save_snapshot("Race guarded", self._single_window_snapshot())
+            fake = LateWindowHyprland()
+            engine = WorkspaceEngine(store=store, hyprland=fake)
+            engine.capabilities = lambda: {"ready": True}
+            check = engine.preflight(preset["id"])
+            self.assertFalse(check["requiresConfirmation"])
+
+            with (
+                patch.object(engine, "_materialize_slots", return_value={}),
+                patch.object(engine, "_finalize_snapshot"),
+            ):
+                engine.load(
+                    preset["id"], expected_workspace_id=1,
+                    expected_token=check["token"],
+                )
+
+            self.assertNotIn(("close", "9"), fake.actions)
+
+    def test_single_load_rejects_a_stale_empty_workspace_preflight(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = PresetStore(Path(directory) / "presets.json")
+            preset = store.save_snapshot("Stale guarded", self._single_window_snapshot())
+            fake = FakeHyprland()
+            fake.current = None
+            engine = WorkspaceEngine(store=store, hyprland=fake)
+            engine.capabilities = lambda: {"ready": True}
+            check = engine.preflight(preset["id"])
+            fake.current = {
+                "address": "0x9", "stableId": "9", "mapped": True,
+                "workspace": {"id": 1, "name": "1"},
+                "class": "late", "initialClass": "late",
+                "title": "Late window", "floating": False,
+            }
+
+            with self.assertRaisesRegex(Exception, "changed after preflight"):
+                engine.load(
+                    preset["id"], expected_workspace_id=1,
+                    expected_token=check["token"],
+                )
+
+            self.assertNotIn(("close", "9"), fake.actions)
 
     def test_group_preflight_validates_all_targets_and_uses_stale_guard(self):
         with tempfile.TemporaryDirectory() as directory:

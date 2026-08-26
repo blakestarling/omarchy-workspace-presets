@@ -345,6 +345,27 @@ class WorkspaceEngine:
                         "stableId": str(candidate.get("stableId", "")),
                     }
                 )
+        windows_to_close = [
+            {
+                "stableId": str(item.get("stableId", "")),
+                "class": item.get("class", ""),
+                "title": item.get("title", ""),
+            }
+            for item in current
+        ]
+        token_input = {
+            "presetId": preset["id"],
+            "preset": hashlib.sha256(
+                json.dumps(preset, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest(),
+            "workspaceId": int(context["workspace"]["id"]),
+            "windowsToClose": sorted(
+                item["stableId"] for item in windows_to_close
+            ),
+        }
+        token = hashlib.sha256(
+            json.dumps(token_input, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
         return {
             "preset": summary,
             "workspace": {
@@ -352,15 +373,13 @@ class WorkspaceEngine:
                 "name": context["workspace"]["name"],
                 "layout": context["workspace"].get("tiledLayout", ""),
             },
-            "windowsToClose": [
-                {"stableId": str(item.get("stableId", "")), "class": item.get("class", ""), "title": item.get("title", "")}
-                for item in current
-            ],
+            "windowsToClose": windows_to_close,
             "conflicts": conflicts,
             # Existing matches on other workspaces are informational only for
             # the default launch-new policy. Confirmation is needed solely
             # when replacing this workspace would close a window.
             "requiresConfirmation": bool(current),
+            "token": token,
         }
 
     def resolve_unresolved_launchers(self) -> dict:
@@ -634,6 +653,7 @@ class WorkspaceEngine:
         preset_id: str,
         *,
         expected_workspace_id: int,
+        expected_token: str,
         conflict_policy: str = "launch-new",
         close_timeout: float = 8.0,
         launch_timeout: float = 12.0,
@@ -650,6 +670,10 @@ class WorkspaceEngine:
                     "activeWorkspaceId": preflight_workspace_id,
                 },
             )
+        if preflight["token"] != expected_token:
+            raise RestoreError(
+                "The preset or workspace windows changed after preflight; nothing was closed"
+            )
         preset = self.store.get(preset_id)
         snapshot = preset["snapshot"]
         context = self.hypr.active_context()
@@ -663,12 +687,25 @@ class WorkspaceEngine:
                 },
             )
         workspace_name = str(context["workspace"]["name"])
-        current = self.hypr.workspace_clients(int(context["workspace"]["id"]))
-        self.progress("close", f"Closing {len(current)} current workspace window(s)", None)
-        for window in current:
-            self.hypr.close(window)
+        # Close only the exact stable IDs covered by the preflight token. A
+        # window that appears after this check must never be swept into the
+        # replacement without warning and consent.
+        closing_ids = {
+            str(item["stableId"])
+            for item in preflight["windowsToClose"]
+            if str(item.get("stableId", ""))
+        }
+        self.progress("close", f"Closing {len(closing_ids)} current workspace window(s)", None)
+        for stable_id in closing_ids:
+            window = self.hypr.find_window(stable_id)
+            if (
+                window
+                and int(window.get("workspace", {}).get("id", -999999))
+                == active_workspace_id
+            ):
+                self.hypr.close(window)
         remaining = self.hypr.wait_until_closed(
-            {str(item.get("stableId")) for item in current}, close_timeout
+            closing_ids, close_timeout
         )
         if remaining:
             raise RestoreError(

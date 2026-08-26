@@ -241,6 +241,7 @@ Panel {
     opacity: enabled ? 1 : 0.4
 
     Text {
+      textFormat: Text.PlainText
       id: actionText
       anchors.centerIn: parent
       text: action.label
@@ -276,6 +277,7 @@ Panel {
     borderSpec: Border.flat(selected ? Color.accent : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.12), 1)
 
     Text {
+      textFormat: Text.PlainText
       anchors.centerIn: parent
       text: tab.label
       color: root.foreground
@@ -350,6 +352,7 @@ Panel {
             spacing: Style.space(2)
 
             Text {
+              textFormat: Text.PlainText
               text: "Workspace Presets"
               color: root.foreground
               font.family: root.fontFamily
@@ -357,6 +360,7 @@ Panel {
               font.bold: true
             }
             Text {
+              textFormat: Text.PlainText
               width: parent.width
               text: "Cold-launch applications and rebuild the current workspace"
               color: Color.muted
@@ -468,6 +472,7 @@ Panel {
             spacing: Style.space(8)
 
             Text {
+              textFormat: Text.PlainText
               text: "Save current workspace"
               color: root.foreground
               font.family: root.fontFamily
@@ -516,6 +521,7 @@ Panel {
           )
 
           Text {
+            textFormat: Text.PlainText
             id: statusText
             anchors.left: parent.left
             anchors.right: parent.right
@@ -545,6 +551,7 @@ Panel {
             anchors.margins: Style.space(9)
             spacing: Style.space(4)
             Text {
+              textFormat: Text.PlainText
               text: "System requirements are not met"
               color: Color.urgent
               font.family: root.fontFamily
@@ -552,6 +559,7 @@ Panel {
               font.bold: true
             }
             Text {
+              textFormat: Text.PlainText
               width: parent.width
               wrapMode: Text.Wrap
               text: {
@@ -590,6 +598,7 @@ Panel {
             anchors.margins: Style.space(9)
             spacing: Style.space(8)
             Text {
+              textFormat: Text.PlainText
               width: parent.width
               wrapMode: Text.Wrap
               text: root.confirmAction === "delete"
@@ -640,6 +649,7 @@ Panel {
             anchors.margins: Style.space(9)
             spacing: Style.space(8)
             Text {
+              textFormat: Text.PlainText
               text: "Delete preset group ‘" + (root.confirmGroup ? root.confirmGroup.name : "") + "’? Presets will be kept."
               color: root.foreground
               font.family: root.fontFamily
@@ -669,6 +679,7 @@ Panel {
         }
 
         Text {
+          textFormat: Text.PlainText
           text: "Saved presets"
           visible: root.activeTab === "presets"
           color: root.foreground
@@ -678,6 +689,7 @@ Panel {
         }
 
         Text {
+          textFormat: Text.PlainText
           width: parent.width
           visible: root.activeTab === "presets" && root.presetService
             && root.visiblePresets.length === 0
@@ -718,6 +730,7 @@ Panel {
                   width: parent.width - layoutBadge.width - parent.spacing
                   spacing: Style.space(2)
                   Text {
+                    textFormat: Text.PlainText
                     visible: root.editingId !== presetCard.modelData.id
                     width: parent.width
                     text: presetCard.modelData.name
@@ -740,6 +753,7 @@ Panel {
                     }
                   }
                   Text {
+                    textFormat: Text.PlainText
                     text: presetCard.modelData.windowCount + " window(s) · Used "
                       + String(presetCard.modelData.useCount || 0) + " time(s)"
                       + (presetCard.modelData.lastUsedAt ? " · Last used " + presetCard.modelData.lastUsedAt : "")
@@ -756,6 +770,7 @@ Panel {
                   radius: implicitHeight / 2
                   color: Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.10)
                   Text {
+                    textFormat: Text.PlainText
                     id: badgeText
                     anchors.centerIn: parent
                     text: presetCard.modelData.layout
@@ -767,6 +782,7 @@ Panel {
               }
 
               Text {
+                textFormat: Text.PlainText
                 visible: !presetCard.modelData.loadable
                 text: presetCard.modelData.unresolvedCount + " launcher(s) need setup before this preset can load"
                 color: Color.urgent
@@ -820,6 +836,7 @@ Panel {
         }
 
         Text {
+          textFormat: Text.PlainText
           text: "Preset groups"
           visible: root.activeTab === "groups"
           color: root.foreground
@@ -844,6 +861,7 @@ Panel {
             anchors.margins: Style.space(9)
             spacing: Style.space(7)
             Text {
+              textFormat: Text.PlainText
               text: "Create a group, then assign each preset to a numbered workspace."
               color: Color.muted
               font.family: root.fontFamily
@@ -876,6 +894,7 @@ Panel {
         }
 
         Text {
+          textFormat: Text.PlainText
           width: parent.width
           visible: root.activeTab === "groups" && root.presetService
             && root.visibleGroups.length === 0
@@ -911,6 +930,7 @@ Panel {
               spacing: Style.space(8)
 
               Text {
+                textFormat: Text.PlainText
                 visible: root.editingGroupId !== groupCard.modelData.id
                 text: groupCard.modelData.name + (groupCard.modelData.launchOnStartup ? " · Startup" : "")
                 color: root.foreground
@@ -931,6 +951,7 @@ Panel {
                 }
               }
               Text {
+                textFormat: Text.PlainText
                 text: groupCard.modelData.assignmentCount + " workspace assignment(s)"
                   + (groupCard.modelData.loadable ? " · Ready" : " · Assign one or more ready presets")
                   + " · Used " + String(groupCard.modelData.useCount || 0) + " time(s)"
@@ -987,6 +1008,7 @@ Panel {
               }
 
               Text {
+                textFormat: Text.PlainText
                 text: "Assignments"
                 color: root.foreground
                 font.family: root.fontFamily
@@ -1006,6 +1028,7 @@ Panel {
                   width: groupColumn.width
                   spacing: Style.space(7)
                   Text {
+                    textFormat: Text.PlainText
                     width: parent.width - workspaceField.width - assignButton.width - removeAssignment.width - parent.spacing * 3
                     text: assignmentRow.modelData.name + (assignmentRow.modelData.loadable ? "" : " (not ready)")
                     color: assignmentRow.modelData.loadable ? root.foreground : Color.urgent
@@ -1093,6 +1116,7 @@ Panel {
             Row {
               width: parent.width
               Text {
+                textFormat: Text.PlainText
                 width: parent.width - closeResolver.width
                 text: "Launcher setup · " + (root.presetService && root.presetService.selectedDetails ? root.presetService.selectedDetails.name : "")
                 color: root.foreground
@@ -1133,6 +1157,7 @@ Panel {
                   anchors.margins: Style.space(8)
                   spacing: Style.space(7)
                   Text {
+                    textFormat: Text.PlainText
                     width: parent.width
                     text: (resolverCard.modelData.match.class || "Unknown application") + " · " + (resolverCard.modelData.match.title || "Untitled window")
                     color: root.foreground
@@ -1211,6 +1236,7 @@ Panel {
                     }
                   }
                   Text {
+                    textFormat: Text.PlainText
                     visible: resolverCard.validationError !== ""
                     text: resolverCard.validationError
                     color: Color.urgent

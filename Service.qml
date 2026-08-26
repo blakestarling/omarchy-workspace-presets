@@ -181,6 +181,7 @@ Item {
       [
         "load", "--id", String(check.preset.id),
         "--expected-workspace-id", String(check.workspace.id),
+        "--expected-token", String(check.token),
         "--conflict-policy", String(conflictPolicy),
         "--confirmed"
       ],

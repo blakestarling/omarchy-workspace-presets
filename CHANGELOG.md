@@ -2,6 +2,11 @@
 
 All notable changes to Workspace Presets are documented here.
 
+## 1.8.2 - 2026-08-26
+
+- Bind single-preset loads to the exact preflighted preset, workspace, and stable window IDs, and never close windows that appear after preflight.
+- Render all QML text as plain text so application and desktop-entry metadata cannot trigger rich-text resource loading.
+
 ## 1.8.1 - 2026-08-26
 
 - Synchronize every target workspace through an exact saved window before rebuilding groups or tiling, preventing startup-time focus publication races from leaving non-final workspaces floating.

@@ -60,6 +60,7 @@ Panel {
     )
 
     Text {
+      textFormat: Text.PlainText
       id: actionText
       anchors.centerIn: parent
       text: action.label
@@ -122,6 +123,7 @@ Panel {
           spacing: Style.space(12)
 
           Text {
+            textFormat: Text.PlainText
             width: parent.width
             text: {
               if (!root.check) return "Confirm load"
@@ -138,6 +140,7 @@ Panel {
           }
 
           Text {
+            textFormat: Text.PlainText
             width: parent.width
             text: {
               if (!root.check) return ""
@@ -171,6 +174,7 @@ Panel {
               spacing: Style.space(6)
 
               Text {
+                textFormat: Text.PlainText
                 width: parent.width
                 text: {
                   if (!root.check) return ""
@@ -187,6 +191,7 @@ Panel {
               }
 
               Text {
+                textFormat: Text.PlainText
                 width: parent.width
                 visible: root.check && root.check.kind !== "group"
                   && (root.check.conflicts || []).length > 0
@@ -201,6 +206,7 @@ Panel {
               }
 
               Text {
+                textFormat: Text.PlainText
                 width: parent.width
                 text: "Applications that refuse to close are never force-killed."
                 color: Color.muted
