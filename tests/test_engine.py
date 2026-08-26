@@ -43,7 +43,8 @@ class FakeHyprland:
     def create_group(self, *args, **kwargs): self.actions.append(("group",))
     def apply_window_state(self, window, state): self.actions.append(("state", window["stableId"]))
     def focus(self, window): self.actions.append(("focus", window["stableId"]))
-    def focus_for_layout(self, window): self.focus(window)
+    def focus_for_layout(self, window): self.actions.append(("layout-focus", window["stableId"]))
+    def layout_message(self, command): self.actions.append(("layout-message", command))
     def focus_workspace(self, workspace): self.actions.append(("focus-workspace", str(workspace)))
 
 
@@ -347,13 +348,36 @@ class EngineRestoreTests(unittest.TestCase):
         self.assertEqual(fake.actions, [
             ("float", "11", False),
             ("focus", "11"),
-            ("focus", "11"),
+            ("layout-focus", "11"),
             ("float", "12", False),
             ("focus", "12"),
-            ("focus", "12"),
+            ("layout-focus", "12"),
             ("float", "13", False),
             ("focus", "13"),
         ])
+
+    def test_scrolling_columns_use_synchronized_focus_before_consume(self):
+        fake = FakeHyprland()
+        engine = WorkspaceEngine(hyprland=fake)
+        windows = {
+            slot: {"stableId": stable, "address": f"0x{stable}"}
+            for slot, stable in (("first", "11"), ("second", "12"))
+        }
+
+        engine._restore_tiling(
+            {
+                "name": "scrolling",
+                "order": ["first", "second"],
+                "columns": [{
+                    "slots": ["first", "second"],
+                    "width": 0.5,
+                }],
+            },
+            windows,
+        )
+
+        consume_index = fake.actions.index(("layout-message", "consume"))
+        self.assertEqual(fake.actions[consume_index - 1], ("layout-focus", "11"))
 
     def test_omarchy_panel_launcher_uses_shell_summon_ipc(self):
         with patch("workspace_presets.engine.subprocess.Popen") as popen:
