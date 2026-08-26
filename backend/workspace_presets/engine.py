@@ -86,6 +86,12 @@ class WorkspaceEngine:
         match = VERSION_RE.search(value)
         return bool(match and (int(match.group(1)), int(match.group(2))) >= (major, minor))
 
+    @staticmethod
+    def group_workspace_id(workspace_slot: int) -> int:
+        """Map Omarchy's number-row label to its Hyprland workspace ID."""
+        slot = int(workspace_slot)
+        return 10 if slot == 0 else slot
+
     def capture(self, name: str, *, overwrite_id: str | None = None) -> dict:
         self.progress("capture", "Reading the active workspace", None)
         context = self.hypr.active_context()
@@ -394,7 +400,10 @@ class WorkspaceEngine:
         all_clients = self.hypr.clients()
         targets = []
         preset_fingerprints = []
-        for assignment in sorted(group["assignments"], key=lambda item: item["workspace"]):
+        for assignment in sorted(
+            group["assignments"],
+            key=lambda item: self.group_workspace_id(item["workspace"]),
+        ):
             preset = self.store.get(assignment["presetId"])
             preset_fingerprints.append([
                 preset["id"],
@@ -404,7 +413,8 @@ class WorkspaceEngine:
             ])
             for slot in preset["snapshot"]["windows"]:
                 self._validate_runtime_launcher(slot["launcher"], entries)
-            workspace_id = int(assignment["workspace"])
+            workspace_slot = int(assignment["workspace"])
+            workspace_id = self.group_workspace_id(workspace_slot)
             current = [
                 item for item in all_clients
                 if item.get("mapped", True)
@@ -436,7 +446,11 @@ class WorkspaceEngine:
                     })
             targets.append({
                 "preset": summaries[preset["id"]],
-                "workspace": {"id": workspace_id, "name": str(workspace_id)},
+                "workspace": {
+                    "id": workspace_id,
+                    "name": str(workspace_id),
+                    "slot": workspace_slot,
+                },
                 "windowsToClose": [
                     {"stableId": str(item.get("stableId", "")), "class": item.get("class", ""), "title": item.get("title", "")}
                     for item in current
@@ -478,8 +492,9 @@ class WorkspaceEngine:
         try:
             for target in check["targets"]:
                 workspace_id = int(target["workspace"]["id"])
+                workspace_slot = int(target["workspace"].get("slot", workspace_id))
                 self.progress(
-                    "group", f"Loading {target['preset']['name']} on workspace {workspace_id}",
+                    "group", f"Loading {target['preset']['name']} on workspace {workspace_slot}",
                     {"current": len(results) + 1, "total": len(check["targets"])},
                 )
                 self.hypr.focus_workspace(workspace_id)

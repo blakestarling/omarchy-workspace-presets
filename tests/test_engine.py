@@ -205,6 +205,70 @@ class EngineRestoreTests(unittest.TestCase):
                 engine.load_group(group["id"], expected_token="stale")
             self.assertEqual(fake.actions, [])
 
+    def test_group_workspace_zero_targets_omarchy_workspace_ten(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = PresetStore(Path(directory) / "presets.json")
+            preset = store.save_snapshot("Zero key", self._single_window_snapshot())
+            group = store.save_group("Number row", [
+                {"presetId": preset["id"], "workspace": 0},
+            ])
+            fake = FakeHyprland()
+            fake.current = None
+            engine = WorkspaceEngine(store=store, hyprland=fake)
+            engine.capabilities = lambda: {"ready": True}
+
+            check = engine.preflight_group(group["id"])
+
+            self.assertEqual(check["targets"][0]["workspace"], {
+                "id": 10, "name": "10", "slot": 0,
+            })
+
+    def test_group_load_activates_workspace_ten_for_zero_key(self):
+        class SwitchingHyprland(FakeHyprland):
+            def __init__(self):
+                super().__init__()
+                self.active_id = 1
+
+            def active_workspace(self):
+                return {"id": self.active_id, "name": str(self.active_id)}
+
+            def active_context(self):
+                return {
+                    "workspace": {
+                        "id": self.active_id,
+                        "name": str(self.active_id),
+                        "tiledLayout": "monocle",
+                    },
+                    "monitor": {"name": "test"},
+                    "workarea": {
+                        "x": 0, "y": 0, "width": 1000, "height": 800, "scale": 1,
+                    },
+                }
+
+            def focus_workspace(self, workspace):
+                self.active_id = int(workspace)
+                super().focus_workspace(workspace)
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = PresetStore(Path(directory) / "presets.json")
+            preset = store.save_snapshot("Zero key", self._single_window_snapshot())
+            group = store.save_group("Number row", [
+                {"presetId": preset["id"], "workspace": 0},
+            ])
+            fake = SwitchingHyprland()
+            fake.current = None
+            engine = WorkspaceEngine(store=store, hyprland=fake)
+            engine.capabilities = lambda: {"ready": True}
+
+            with patch.object(engine, "load", return_value={"windowCount": 1}) as load:
+                engine.load_group(group["id"])
+
+            self.assertEqual(fake.actions, [
+                ("focus-workspace", "10"),
+                ("focus-workspace", "1"),
+            ])
+            self.assertEqual(load.call_args.kwargs["expected_workspace_id"], 10)
+
     def test_omarchy_panel_launcher_uses_shell_summon_ipc(self):
         with patch("workspace_presets.engine.subprocess.Popen") as popen:
             WorkspaceEngine._launch({

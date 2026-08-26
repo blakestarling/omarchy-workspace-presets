@@ -2,6 +2,11 @@
 
 All notable changes to Workspace Presets are documented here.
 
+## 1.3.4 - 2026-08-25
+
+- Map the user-facing workspace key 0 to Hyprland workspace 10, matching Omarchy's default number-row bindings.
+- Reject literal Hyprland workspace ID 0 before dispatch and keep group progress labeled with the configured 0–9 key.
+
 ## 1.3.3 - 2026-08-25
 
 - Allow preset groups to focus and load workspace 0 through the Hyprland dispatcher.
