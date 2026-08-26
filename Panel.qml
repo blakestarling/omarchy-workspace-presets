@@ -32,6 +32,8 @@ Panel {
   readonly property var visibleGroups: filteredGroups()
   readonly property var barIdentity: hostWidget || root
   readonly property var presetService: bar?.shell?.serviceFor(moduleName)
+  readonly property int loadStartedSerial: presetService
+    ? Number(presetService.loadStartedSerial || 0) : 0
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
@@ -63,10 +65,7 @@ Panel {
 
   function toggle() { opened ? close() : openFromHotkey() }
 
-  Connections {
-    target: root.presetService
-    function onLoadStarted() { root.close() }
-  }
+  onLoadStartedSerialChanged: if (root.opened && loadStartedSerial > 0) root.close()
 
   function workspaceFor(group, presetId) {
     var assignments = group && Array.isArray(group.assignments) ? group.assignments : []

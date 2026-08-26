@@ -2,6 +2,10 @@
 
 All notable changes to Workspace Presets are documented here.
 
+## 1.6.4 - 2026-08-26
+
+- Keep automatic panel closing reliable when a plugin hot reload temporarily retains an older service instance.
+
 ## 1.6.3 - 2026-08-26
 
 - Launch restored windows floating and without initial focus so concurrent arrival order cannot mutate the target tiling layout.

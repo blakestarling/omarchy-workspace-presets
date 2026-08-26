@@ -26,9 +26,9 @@ Item {
   property bool initialized: false
   property var commandQueue: []
   property bool refreshAfterCurrent: false
+  property int loadStartedSerial: 0
 
   signal changed()
-  signal loadStarted()
 
   function initialize() {
     if (initialized || backendPath === "") return
@@ -163,7 +163,7 @@ Item {
         ["group-load", "--id", String(check.group.id), "--expected-token", String(check.token), "--confirmed"],
         "group-load", true
       )
-      loadStarted()
+      loadStartedSerial += 1
       return
     }
     if (!check.preset || !check.workspace) return
@@ -177,7 +177,7 @@ Item {
       "load",
       true
     )
-    loadStarted()
+    loadStartedSerial += 1
   }
 
   function confirmLoad(conflictPolicy) {
