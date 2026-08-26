@@ -260,14 +260,73 @@ class EngineRestoreTests(unittest.TestCase):
             engine = WorkspaceEngine(store=store, hyprland=fake)
             engine.capabilities = lambda: {"ready": True}
 
-            with patch.object(engine, "load", return_value={"windowCount": 1}) as load:
+            def spawn(_launcher):
+                fake.spawned.append({
+                    "address": "0x2", "stableId": "2", "mapped": True,
+                    "workspace": {"id": 1, "name": "1"},
+                    "class": "foot", "initialClass": "foot",
+                    "title": "Terminal", "floating": False,
+                })
+
+            with patch.object(engine, "_launch", side_effect=spawn):
                 engine.load_group(group["id"])
 
-            self.assertEqual(fake.actions, [
+            focus_actions = [item for item in fake.actions if item[0] == "focus-workspace"]
+            self.assertEqual(focus_actions, [
+                ("focus-workspace", "1"),
                 ("focus-workspace", "10"),
                 ("focus-workspace", "1"),
             ])
-            self.assertEqual(load.call_args.kwargs["expected_workspace_id"], 10)
+
+    def test_unrelated_window_classes_launch_in_the_same_wave(self):
+        fake = FakeHyprland()
+        fake.current = None
+        engine = WorkspaceEngine(hyprland=fake)
+        tasks = []
+        for index, window_class in enumerate(("firefox", "code"), start=1):
+            tasks.append({
+                "key": str(index), "workspaceName": str(index),
+                "slot": {
+                    "id": str(index), "match": {"class": window_class},
+                    "launcher": {"kind": "command", "argv": ["true"]},
+                },
+            })
+        launches = []
+
+        def spawn(_launcher):
+            launches.append(len(fake.spawned) + 1)
+            index = len(fake.spawned)
+            window_class = ("firefox", "code")[index]
+            fake.spawned.append({
+                "address": f"0x{index + 2}", "stableId": str(index + 2),
+                "mapped": True, "workspace": {"id": 1, "name": "1"},
+                "class": window_class, "initialClass": window_class,
+                "title": window_class, "floating": False,
+            })
+
+        with patch.object(engine, "_launch", side_effect=spawn):
+            result = engine._materialize_slots(
+                tasks, conflict_policy="launch-new", launch_timeout=0.2
+            )
+
+        self.assertEqual(launches, [1, 2])
+        self.assertEqual(set(result), {"1", "2"})
+        self.assertEqual(len(engine._launch_waves(tasks)), 1)
+
+    def test_duplicate_window_classes_launch_in_separate_waves(self):
+        engine = WorkspaceEngine(hyprland=FakeHyprland())
+        tasks = [{
+            "key": str(index), "workspaceName": str(index),
+            "slot": {
+                "id": str(index),
+                "match": {"class": "foot", "initialClass": "foot"},
+                "launcher": {"kind": "command", "argv": ["true"]},
+            },
+        } for index in (1, 2)]
+
+        self.assertEqual([[task["key"] for task in wave] for wave in engine._launch_waves(tasks)], [
+            ["1"], ["2"],
+        ])
 
     def test_omarchy_panel_launcher_uses_shell_summon_ipc(self):
         with patch("workspace_presets.engine.subprocess.Popen") as popen:

@@ -2,6 +2,14 @@
 
 All notable changes to Workspace Presets are documented here.
 
+## 1.5.0 - 2026-08-26
+
+- Launch unrelated saved applications concurrently instead of waiting for each application before starting the next one.
+- Keep duplicate or overlapping window classes in ordered launch waves so stable-ID matching remains deterministic.
+- Launch preset-group applications directly onto their assigned workspaces with Hyprland's one-shot silent workspace rules.
+- Close all group targets first, populate every workspace in parallel, and limit workspace switching to the final exact-layout pass.
+- Restore the user's original focused workspace and window after a group load, including failed launch attempts.
+
 ## 1.4.0 - 2026-08-26
 
 - Capture explicit programs launched inside supported terminal emulators and replay the terminal's exact argv and working directory.

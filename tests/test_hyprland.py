@@ -81,6 +81,21 @@ class HyprlandLuaDispatcherTests(unittest.TestCase):
         self.assertIn('layout="master"', args[2])
         self.assertIn('orientation="right"', args[2])
 
+    def test_exec_routes_new_windows_to_a_workspace_silently(self):
+        hypr = RecordingHyprland()
+
+        hypr.exec_on_workspace(
+            ["uwsm-app", "--", "foot", "-e", "herdr"],
+            "8",
+            cwd="/home/blake/My Project",
+        )
+
+        lua = hypr.calls[0][0][2]
+        self.assertIn("hl.exec_cmd(", lua)
+        self.assertIn('workspace="8 silent"', lua)
+        self.assertIn("--chdir=/home/blake/My Project", lua)
+        self.assertIn("foot -e herdr", lua)
+
     def test_dispatch_result_failures_are_promoted_to_hyprctl_errors(self):
         hypr = RecordingHyprland()
         hypr.close({"stableId": "7"})

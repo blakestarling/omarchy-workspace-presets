@@ -79,7 +79,7 @@ If `XDG_CONFIG_HOME` is set, the data directory is `$XDG_CONFIG_HOME/omarchy-wor
 
 A preset that needs launcher setup is saved as an explicit draft. It cannot be loaded until every window has a launch recipe. Installed Omarchy panel plugins are matched by their manifest name and relaunched through `omarchy-shell`; existing drafts are rechecked automatically when the service starts.
 
-Terminals launched with an explicit program are detected automatically. For example, Herdr is saved as its terminal invocation ending in `-e herdr`, while Docker View retains `-e omarchy-launch-docker-tui` so Omarchy's Docker-access wrapper still runs. Overwrite presets captured by an older plugin version to replace their generic terminal launchers with this richer recipe.
+Terminals launched with an explicit program are detected automatically in Foot, Alacritty, Kitty, Ghostty, and WezTerm. For example, Herdr is saved as its terminal invocation ending in `-e herdr`, while Docker View retains `-e omarchy-launch-docker-tui` so Omarchy's Docker-access wrapper still runs. Overwrite presets captured by an older plugin version to replace their generic terminal launchers with this richer recipe.
 
 ### Load
 
@@ -92,7 +92,7 @@ Press **Escape** at any time to close the Workspace Presets panel and cancel a p
 
 Workspace Presets validates all launchers before closing anything. It then sends normal close requests to current-workspace applications and waits. If an application refuses to close—for example, because it is showing an unsaved-changes dialog—the restore stops and never force-kills it.
 
-After the workspace is clear, the backend launches each saved slot through `uwsm-app`, waits for a newly created matching Hyprland stable ID, makes the windows temporarily floating, and rebuilds the saved layout deterministically. Groups and compositor state are restored last. A launch timeout is reported as a failure, never as a successful partial restore.
+After the workspace is clear, the backend launches saved applications through `uwsm-app` concurrently, tracks each newly created matching Hyprland stable ID, makes the windows temporarily floating, and rebuilds the saved layout deterministically. Windows with duplicate or overlapping classes launch in separate waves so they cannot be assigned to the wrong slot. Groups and compositor state are restored last. A launch timeout is reported as a failure, never as a successful partial restore.
 
 ### Manage
 
@@ -110,7 +110,7 @@ Preset names are trimmed, non-empty, and case-insensitively unique.
 3. Choose **Launch group**. The plugin validates every preset, launcher, and target workspace before it changes anything.
 4. If all target workspaces are empty, launch begins immediately. Otherwise, one confirmation shows the total windows that will receive normal close requests.
 
-Group loads launch new application instances instead of moving matches from unrelated workspaces. Workspaces are rebuilt one at a time as part of the single guarded operation, and focus returns to the workspace that was active when the group launch began. If a group or any target workspace changes after confirmation, the operation stops before closing anything.
+Group loads launch new application instances instead of moving matches from unrelated workspaces. All target workspaces are cleared first, then unrelated applications for every preset start concurrently and are routed directly to their assigned workspace with a silent one-shot Hyprland rule. Exact layout reconstruction still requires a brief final pass over each target workspace because Hyprland's layout dispatcher operates on the active workspace. Focus returns to the workspace and window that were active when the group launch began. If a group or any target workspace changes after confirmation, the operation stops before closing anything.
 
 Groups can be renamed, reassigned, and deleted without deleting their presets. A preset cannot be deleted while a group references it; remove that assignment first.
 

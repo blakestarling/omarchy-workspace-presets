@@ -23,7 +23,7 @@ from .desktop import (
     terminal_process_launcher,
 )
 from .errors import LaunchError, RestoreError, UnsupportedError, ValidationError
-from .hyprland import Hyprland, wait_for_new_window, window_match_score
+from .hyprland import Hyprland, window_match_score
 from .layouts import (
     capture_layout,
     denormalized_geometry,
@@ -496,28 +496,100 @@ class WorkspaceEngine:
             raise RestoreError(
                 "The group or one of its target workspaces changed after confirmation; nothing was closed"
             )
+        if conflict_policy not in {"launch-new", "move-existing"}:
+            raise ValidationError("Conflict policy must be launch-new or move-existing")
         original_workspace_id = int(self.hypr.active_workspace().get("id", 0))
+        active_window = getattr(self.hypr, "active_window", lambda: None)()
+        original_window_id = str((active_window or {}).get("stableId", ""))
+        targets = []
+        closing_ids: set[str] = set()
+        for index, target in enumerate(check["targets"]):
+            preset = self.store.get(target["preset"]["id"])
+            targets.append({
+                "index": index,
+                "preset": preset,
+                "snapshot": preset["snapshot"],
+                "workspace": target["workspace"],
+                "conflicts": {item["slotId"]: item for item in target["conflicts"]},
+                "slotWindows": {},
+            })
+            closing_ids.update(str(item["stableId"]) for item in target["windowsToClose"])
+
+        self.progress(
+            "close", f"Closing {len(closing_ids)} window(s) across target workspaces", None
+        )
+        for stable_id in closing_ids:
+            window = self.hypr.find_window(stable_id)
+            if window:
+                self.hypr.close(window)
+        remaining = self.hypr.wait_until_closed(closing_ids, close_timeout)
+        if remaining:
+            raise RestoreError(
+                "One or more applications did not close; group restore was stopped without force-killing them",
+                details={"remainingStableIds": sorted(remaining)},
+            )
+
+        tasks = []
+        for target in targets:
+            workspace_name = str(target["workspace"]["name"])
+            self.hypr.set_workspace_layout(workspace_name, target["snapshot"]["layout"])
+            for slot in target["snapshot"]["windows"]:
+                tasks.append({
+                    "key": f"{target['index']}:{slot['id']}",
+                    "slot": slot,
+                    "workspaceName": workspace_name,
+                    "conflict": target["conflicts"].get(slot["id"]),
+                    "targetIndex": target["index"],
+                })
+        self.progress("launch", f"Opening {len(tasks)} window(s) across all workspaces", None)
+        try:
+            materialized = self._materialize_slots(
+                tasks,
+                conflict_policy=conflict_policy,
+                launch_timeout=launch_timeout,
+                preserve_workspace_id=original_workspace_id,
+                preserve_window_id=original_window_id,
+            )
+        except Exception:
+            if original_workspace_id >= 1:
+                self.hypr.focus_workspace(original_workspace_id)
+                if original_window_id:
+                    original_window = self.hypr.find_window(original_window_id)
+                    if original_window:
+                        self.hypr.focus(original_window)
+            raise
+        for task in tasks:
+            targets[task["targetIndex"]]["slotWindows"][task["slot"]["id"]] = materialized[task["key"]]
+
         results = []
         try:
-            for target in check["targets"]:
+            for target in targets:
                 workspace_id = int(target["workspace"]["id"])
                 workspace_slot = int(target["workspace"].get("slot", workspace_id))
                 self.progress(
-                    "group", f"Loading {target['preset']['name']} on workspace {workspace_slot}",
+                    "layout", f"Finalizing {target['preset']['name']} on workspace {workspace_slot}",
                     {"current": len(results) + 1, "total": len(check["targets"])},
                 )
                 self.hypr.focus_workspace(workspace_id)
                 context = self.hypr.active_context()
                 if int(context["workspace"]["id"]) != workspace_id:
                     raise RestoreError(f"Could not activate workspace {workspace_id}")
-                results.append(self.load(
-                    target["preset"]["id"], expected_workspace_id=workspace_id,
-                    conflict_policy=conflict_policy, close_timeout=close_timeout,
-                    launch_timeout=launch_timeout,
-                ))
+                self._finalize_snapshot(target["snapshot"], target["slotWindows"], context)
+                result = {
+                    "presetId": target["preset"]["id"],
+                    "name": target["preset"]["name"],
+                    "workspace": str(target["workspace"]["name"]),
+                    "windowCount": len(target["slotWindows"]),
+                }
+                results.append(result)
+                self.store.record_preset_use(target["preset"]["id"])
         finally:
-            if original_workspace_id >= 0:
+            if original_workspace_id >= 1:
                 self.hypr.focus_workspace(original_workspace_id)
+                if original_window_id:
+                    original_window = self.hypr.find_window(original_window_id)
+                    if original_window:
+                        self.hypr.focus(original_window)
         result = {
             "groupId": group_id, "name": check["group"]["name"],
             "workspaceCount": len(results), "results": results,
@@ -598,41 +670,166 @@ class WorkspaceEngine:
 
         self.hypr.set_workspace_layout(workspace_name, snapshot["layout"])
         conflict_by_slot = {item["slotId"]: item for item in preflight["conflicts"]}
-        slot_windows: dict[str, dict] = {}
-        launched: list[str] = []
         slots = snapshot["windows"]
-        for index, slot in enumerate(slots, start=1):
-            label = slot.get("match", {}).get("class") or slot.get("match", {}).get("title") or f"window {index}"
-            self.progress("launch", f"Opening {label}", {"current": index, "total": len(slots)})
-            conflict = conflict_by_slot.get(slot["id"])
+        slot_windows = self._materialize_slots([{
+            "key": slot["id"],
+            "slot": slot,
+            "workspaceName": workspace_name,
+            "conflict": conflict_by_slot.get(slot["id"]),
+        } for slot in slots], conflict_policy=conflict_policy, launch_timeout=launch_timeout)
+        self._finalize_snapshot(snapshot, slot_windows, context)
+        result = {
+            "presetId": preset_id,
+            "name": preset["name"],
+            "workspace": workspace_name,
+            "windowCount": len(slot_windows),
+        }
+        self.store.record_preset_use(preset_id)
+        self.progress("complete", f"Loaded {preset['name']}", result)
+        return result
+
+    @staticmethod
+    def _match_identity(slot: dict) -> set[str]:
+        match = slot.get("match", {})
+        return {
+            str(match.get(name, "")).casefold()
+            for name in ("class", "initialClass")
+            if str(match.get(name, "")).strip()
+        }
+
+    @classmethod
+    def _launch_waves(cls, tasks: list[dict]) -> list[list[dict]]:
+        """Serialize ambiguous matches while launching unrelated applications together."""
+        components: list[list[dict]] = []
+        identities_by_component: list[set[str]] = []
+        for task in tasks:
+            identities = cls._match_identity(task["slot"])
+            overlaps = [
+                index for index, existing in enumerate(identities_by_component)
+                if identities and existing.intersection(identities)
+            ]
+            if not overlaps:
+                components.append([task])
+                identities_by_component.append(set(identities))
+                continue
+            first = overlaps[0]
+            components[first].append(task)
+            identities_by_component[first].update(identities)
+            for index in reversed(overlaps[1:]):
+                components[first].extend(components.pop(index))
+                identities_by_component[first].update(identities_by_component.pop(index))
+        return [
+            [component[index] for component in components if index < len(component)]
+            for index in range(max((len(component) for component in components), default=0))
+        ]
+
+    def _materialize_slots(
+        self,
+        tasks: list[dict],
+        *,
+        conflict_policy: str,
+        launch_timeout: float,
+        preserve_workspace_id: int | None = None,
+        preserve_window_id: str = "",
+    ) -> dict[str, dict]:
+        windows: dict[str, dict] = {}
+        pending = []
+        used_existing: set[str] = set()
+        for task in tasks:
+            conflict = task.get("conflict")
             window = None
             if conflict_policy == "move-existing" and conflict:
-                window = self.hypr.find_window(conflict["stableId"])
-                if window:
-                    self.hypr.move_to_workspace(window, workspace_name)
-            if window is None:
-                before = {str(item.get("stableId", item.get("address", ""))) for item in self.hypr.clients()}
-                self._launch(slot["launcher"])
-                window = wait_for_new_window(
-                    self.hypr,
-                    before,
-                    slot["match"],
-                    timeout=launch_timeout,
-                )
-                if window is None:
-                    details = {"slotId": slot["id"], "launcher": slot["launcher"], "launchedSlots": launched}
-                    if conflict:
-                        details["existingConflict"] = conflict
-                    raise LaunchError(
-                        f"{label} did not create a matching window before the timeout",
-                        details=details,
-                    )
-            self.hypr.move_to_workspace(window, workspace_name)
-            self.hypr.set_floating(window, True)
-            refreshed = self.hypr.find_window(str(window.get("stableId", ""))) or window
-            slot_windows[slot["id"]] = refreshed
-            launched.append(slot["id"])
+                stable_id = str(conflict.get("stableId", ""))
+                if stable_id not in used_existing:
+                    window = self.hypr.find_window(stable_id)
+            if window:
+                stable_id = str(window.get("stableId", ""))
+                used_existing.add(stable_id)
+                self.hypr.move_to_workspace(window, task["workspaceName"])
+                self.hypr.set_floating(window, True)
+                windows[task["key"]] = self.hypr.find_window(stable_id) or window
+            else:
+                pending.append(task)
 
+        launched: list[str] = []
+        waves = self._launch_waves(pending)
+        total = len(pending)
+        for wave_index, wave in enumerate(waves, start=1):
+            before = {
+                str(item.get("stableId", item.get("address", "")))
+                for item in self.hypr.clients()
+            }
+            labels = [
+                task["slot"].get("match", {}).get("class")
+                or task["slot"].get("match", {}).get("title")
+                or "window"
+                for task in wave
+            ]
+            self.progress(
+                "launch",
+                f"Opening {', '.join(labels)}",
+                {"wave": wave_index, "waves": len(waves), "current": len(launched), "total": total},
+            )
+            for task in wave:
+                self._launch_on_workspace(
+                    task["slot"]["launcher"], task["workspaceName"]
+                )
+
+            unresolved = {task["key"]: task for task in wave}
+            assigned_ids: set[str] = set()
+            deadline = time.monotonic() + launch_timeout
+            while unresolved and time.monotonic() < deadline:
+                candidates = []
+                for candidate in self.hypr.clients():
+                    stable_id = str(candidate.get("stableId", candidate.get("address", "")))
+                    if stable_id in before or stable_id in assigned_ids:
+                        continue
+                    for key, task in unresolved.items():
+                        score = window_match_score(candidate, task["slot"]["match"])
+                        if score >= 100:
+                            candidates.append((score, stable_id, key, candidate))
+                for _score, stable_id, key, candidate in sorted(
+                    candidates, key=lambda item: (item[0], item[1], item[2]), reverse=True
+                ):
+                    if key not in unresolved or stable_id in assigned_ids:
+                        continue
+                    task = unresolved.pop(key)
+                    assigned_ids.add(stable_id)
+                    self.hypr.move_to_workspace(candidate, task["workspaceName"])
+                    self.hypr.set_floating(candidate, True)
+                    windows[key] = self.hypr.find_window(stable_id) or candidate
+                    launched.append(key)
+                if unresolved:
+                    time.sleep(0.12)
+
+            if unresolved:
+                task = next(iter(unresolved.values()))
+                slot = task["slot"]
+                label = slot.get("match", {}).get("class") or slot.get("match", {}).get("title") or "window"
+                details = {
+                    "slotId": slot["id"],
+                    "launcher": slot["launcher"],
+                    "launchedSlots": launched,
+                    "missingSlotIds": [item["slot"]["id"] for item in unresolved.values()],
+                }
+                if task.get("conflict"):
+                    details["existingConflict"] = task["conflict"]
+                raise LaunchError(
+                    f"{label} did not create a matching window before the timeout",
+                    details=details,
+                )
+            if preserve_workspace_id and preserve_workspace_id >= 1:
+                self.hypr.focus_workspace(preserve_workspace_id)
+                if preserve_window_id:
+                    preserved = self.hypr.find_window(preserve_window_id)
+                    if preserved:
+                        self.hypr.focus(preserved)
+        return windows
+
+    def _finalize_snapshot(
+        self, snapshot: dict, slot_windows: dict[str, dict], context: dict
+    ) -> None:
+        slots = snapshot["windows"]
         self.progress("layout", "Rebuilding groups and tiling topology", None)
         for group in snapshot.get("groups", []):
             members = [slot_windows[slot_id] for slot_id in group["members"]]
@@ -660,27 +857,21 @@ class WorkspaceEngine:
         focus_id = snapshot.get("finalFocusSlotId")
         if focus_id in slot_windows:
             self.hypr.focus(slot_windows[focus_id])
-        result = {
-            "presetId": preset_id,
-            "name": preset["name"],
-            "workspace": workspace_name,
-            "windowCount": len(slot_windows),
-        }
-        self.store.record_preset_use(preset_id)
-        self.progress("complete", f"Loaded {preset['name']}", result)
-        return result
 
     @staticmethod
-    def _launch(launcher: dict) -> None:
+    def _launcher_command(launcher: dict) -> list[str]:
         if launcher["kind"] == "desktop":
-            command = ["uwsm-app", "--", "gtk-launch", launcher["desktopId"]]
+            return ["uwsm-app", "--", "gtk-launch", launcher["desktopId"]]
         elif launcher["kind"] == "omarchy-plugin":
-            command = [
+            return [
                 "uwsm-app", "--", "omarchy-shell", "shell", "summon",
                 launcher["pluginId"], "{}",
             ]
-        else:
-            command = ["uwsm-app", "--", *launcher["argv"]]
+        return ["uwsm-app", "--", *launcher["argv"]]
+
+    @staticmethod
+    def _launch(launcher: dict) -> None:
+        command = WorkspaceEngine._launcher_command(launcher)
         try:
             subprocess.Popen(
                 command,
@@ -693,6 +884,20 @@ class WorkspaceEngine:
             )
         except OSError as exc:
             raise LaunchError(f"Could not start {command[-1]!r}: {exc}") from exc
+
+    def _launch_on_workspace(self, launcher: dict, workspace_name: str) -> None:
+        launch = getattr(self.hypr, "exec_on_workspace", None)
+        if launch is None:
+            self._launch(launcher)
+            return
+        try:
+            launch(
+                self._launcher_command(launcher),
+                workspace_name,
+                cwd=launcher.get("cwd"),
+            )
+        except OSError as exc:
+            raise LaunchError(f"Could not start {self._launcher_command(launcher)[-1]!r}: {exc}") from exc
 
     def _restore_tiling(self, layout: dict, windows: dict[str, dict]) -> None:
         name = layout["name"]

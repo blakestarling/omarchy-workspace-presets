@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import shutil
 import subprocess
 import time
@@ -57,6 +58,12 @@ class Hyprland:
         value = self.query("activeworkspace")
         if not isinstance(value, dict) or "id" not in value:
             raise HyprlandError("No active Hyprland workspace")
+        return value
+
+    def active_window(self) -> dict | None:
+        value = self.query("activewindow")
+        if not isinstance(value, dict) or not value.get("address"):
+            return None
         return value
 
     def monitors(self) -> list[dict]:
@@ -186,6 +193,23 @@ class Hyprland:
         workspace = self.lua_string(workspace_name)
         self.lua_dispatch(
             f"hl.dsp.window.move({{workspace={workspace},follow=false,window={selector}}})"
+        )
+
+    def exec_on_workspace(
+        self, command: list[str], workspace_name: str, *, cwd: str | None = None
+    ) -> None:
+        """Launch with a one-shot silent workspace rule tied to the new process."""
+        if not workspace_name:
+            raise HyprlandError("Unsafe workspace name")
+        launch_command = list(command)
+        if cwd:
+            launch_command = ["env", f"--chdir={Path(cwd).expanduser().resolve()}", *launch_command]
+        command_text = shlex.join(launch_command)
+        workspace_rule = f"{workspace_name} silent"
+        self.repl(
+            "hl.exec_cmd("
+            f"{self.lua_string(command_text)},"
+            f"{{workspace={self.lua_string(workspace_rule)}}})"
         )
 
     def move_resize(self, window: dict | str, geometry: dict) -> None:
