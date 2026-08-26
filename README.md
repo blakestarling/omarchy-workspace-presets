@@ -2,7 +2,7 @@
 
 Save the application windows on a Hyprland workspace as a named preset, then cold-load that preset later. Combine presets into groups assigned to numbered workspaces and launch a complete multi-workspace setup in one action—or automatically once when the Hyprland session starts. Workspace Presets launches missing applications, tracks the new windows, and rebuilds the saved layout instead of assuming the windows are already open.
 
-![Workspace Presets group manager showing presets assigned to workspaces 1 and 0](assets/workspace-presets-groups.png)
+![Demo](assets/screenrecording-2026-08-26_08-44-20.mp4)
 
 This is a native Omarchy Quattro plugin: the bar widget and management panel run in `omarchy-shell`, while a bundled Python standard-library backend handles capture, validation, and restore orchestration.
 
