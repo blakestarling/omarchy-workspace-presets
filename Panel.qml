@@ -256,20 +256,21 @@ Panel {
     contentWidth: popup.fittedContentWidth(Style.space(620))
     contentHeight: popup.fittedContentHeight(Style.space(680))
 
-    // A backend refresh can destroy the focused delegate after a save. A
-    // window shortcut still receives Escape when no replacement item has
-    // active focus, unlike the item-level fallback below.
-    Shortcut {
-      sequence: "Escape"
-      context: Qt.WindowShortcut
-      enabled: root.opened
-      onActivated: root.close()
-    }
-
     Item {
       id: escapeKeyCatcher
       anchors.fill: parent
       focus: true
+
+      // A backend refresh can destroy the focused delegate after a save. A
+      // window shortcut still receives Escape when no replacement item has
+      // active focus, unlike the item-level fallback below.
+      Shortcut {
+        sequence: "Escape"
+        context: Qt.WindowShortcut
+        enabled: root.opened
+        onActivated: root.close()
+      }
+
       Keys.priority: Keys.BeforeItem
       Keys.onEscapePressed: function(event) {
         root.close()
