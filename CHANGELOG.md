@@ -2,6 +2,11 @@
 
 All notable changes to Workspace Presets are documented here.
 
+## 1.6.6 - 2026-08-26
+
+- Keep buttons and fields visually stable during backend work, using an invisible interaction shield for foreground operations instead of fading every control.
+- Keep empty-state messages stable during refreshes instead of briefly hiding and reappearing.
+
 ## 1.6.5 - 2026-08-26
 
 - Inset panel content so left and right `BorderSurface` strokes are no longer clipped by the scrolling viewport.

@@ -37,6 +37,8 @@ Panel {
     ? Number(presetService.loadStartedSerial || 0) : 0
   readonly property bool foregroundBusy: presetService
     && presetService.busy && isForegroundOperation(presetService.currentOperation)
+  readonly property bool controlsLocked: presetService
+    && presetService.busy && !isBackgroundOperation(presetService.currentOperation)
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
@@ -78,10 +80,16 @@ Panel {
   }
 
   function isForegroundOperation(operation) {
+    return !isBackgroundOperation(operation) && [
+      "preflight", "group-preflight"
+    ].indexOf(String(operation || "")) === -1
+  }
+
+  function isBackgroundOperation(operation) {
     return [
       "capabilities", "resolve-launchers", "list", "groups", "startup-group",
-      "details", "desktop-entries", "preflight", "group-preflight"
-    ].indexOf(String(operation || "")) === -1
+      "details", "desktop-entries"
+    ].indexOf(String(operation || "")) !== -1
   }
 
   Timer {
@@ -353,7 +361,7 @@ Panel {
             label: "Refresh"
             foreground: root.foreground
             fontFamily: root.fontFamily
-            enabled: root.presetService && !root.presetService.busy
+            enabled: !!root.presetService
             onClicked: root.presetService.refresh()
           }
         }
@@ -466,7 +474,7 @@ Panel {
                 placeholderText: "Preset name"
                 foreground: root.foreground
                 accent: Color.accent
-                enabled: root.presetService && !root.presetService.busy
+                enabled: !!root.presetService
                 onAccepted: saveButton.clicked()
               }
               ActionButton {
@@ -474,7 +482,7 @@ Panel {
                 label: "Save"
                 foreground: root.foreground
                 fontFamily: root.fontFamily
-                enabled: root.presetService && !root.presetService.busy && newPresetName.text.trim() !== ""
+                enabled: root.presetService && newPresetName.text.trim() !== ""
                 onClicked: {
                   root.presetService.capture(newPresetName.text.trim())
                   newPresetName.text = ""
@@ -734,7 +742,7 @@ Panel {
         Text {
           width: parent.width
           visible: root.activeTab === "presets" && root.presetService
-            && root.visiblePresets.length === 0 && !root.presetService.busy
+            && root.visiblePresets.length === 0
           text: root.presetService && root.presetService.presets.length === 0
             ? "Save this workspace to create your first preset."
             : "No presets match your search."
@@ -834,7 +842,7 @@ Panel {
                   label: presetCard.modelData.loadable ? "Load" : "Set up"
                   foreground: root.foreground
                   fontFamily: root.fontFamily
-                  enabled: root.presetService && !root.presetService.busy
+                  enabled: !!root.presetService
                   onClicked: {
                     if (presetCard.modelData.loadable) root.presetService.preflight(presetCard.modelData.id)
                     else {
@@ -847,7 +855,7 @@ Panel {
                   label: root.editingId === presetCard.modelData.id ? "Cancel rename" : "Rename"
                   foreground: root.foreground
                   fontFamily: root.fontFamily
-                  enabled: root.presetService && !root.presetService.busy
+                  enabled: !!root.presetService
                   onClicked: {
                     if (root.editingId === presetCard.modelData.id) root.editingId = ""
                     else { root.editingId = presetCard.modelData.id; root.editingName = presetCard.modelData.name }
@@ -857,7 +865,7 @@ Panel {
                   label: "Overwrite"
                   foreground: root.foreground
                   fontFamily: root.fontFamily
-                  enabled: root.presetService && !root.presetService.busy
+                  enabled: !!root.presetService
                   onClicked: { root.confirmAction = "overwrite"; root.confirmPreset = presetCard.modelData }
                 }
                 ActionButton {
@@ -865,7 +873,7 @@ Panel {
                   foreground: root.foreground
                   fontFamily: root.fontFamily
                   destructive: true
-                  enabled: root.presetService && !root.presetService.busy
+                  enabled: !!root.presetService
                   onClicked: { root.confirmAction = "delete"; root.confirmPreset = presetCard.modelData }
                 }
               }
@@ -919,7 +927,7 @@ Panel {
                 label: "Create group"
                 foreground: root.foreground
                 fontFamily: root.fontFamily
-                enabled: root.presetService && !root.presetService.busy && newGroupName.text.trim() !== ""
+                enabled: root.presetService && newGroupName.text.trim() !== ""
                 onClicked: {
                   root.presetService.createGroup(newGroupName.text.trim())
                   newGroupName.text = ""
@@ -932,7 +940,7 @@ Panel {
         Text {
           width: parent.width
           visible: root.activeTab === "groups" && root.presetService
-            && root.visibleGroups.length === 0 && !root.presetService.busy
+            && root.visibleGroups.length === 0
           text: root.presetService && root.presetService.presetGroups.length === 0
             ? "No preset groups yet."
             : "No preset groups match your search."
@@ -998,14 +1006,14 @@ Panel {
                   label: "Launch group"
                   foreground: root.foreground
                   fontFamily: root.fontFamily
-                  enabled: root.presetService && !root.presetService.busy && groupCard.modelData.loadable
+                  enabled: root.presetService && groupCard.modelData.loadable
                   onClicked: root.presetService.preflightGroup(groupCard.modelData.id)
                 }
                 ActionButton {
                   label: root.editingGroupId === groupCard.modelData.id ? "Cancel rename" : "Rename"
                   foreground: root.foreground
                   fontFamily: root.fontFamily
-                  enabled: root.presetService && !root.presetService.busy
+                  enabled: !!root.presetService
                   onClicked: {
                     if (root.editingGroupId === groupCard.modelData.id) root.editingGroupId = ""
                     else { root.editingGroupId = groupCard.modelData.id; root.editingGroupName = groupCard.modelData.name }
@@ -1015,7 +1023,7 @@ Panel {
                   label: groupCard.modelData.launchOnStartup ? "Disable startup" : "Launch on startup"
                   foreground: root.foreground
                   fontFamily: root.fontFamily
-                  enabled: root.presetService && !root.presetService.busy && groupCard.modelData.loadable
+                  enabled: root.presetService && groupCard.modelData.loadable
                   onClicked: root.presetService.setStartupGroup(groupCard.modelData.id, !groupCard.modelData.launchOnStartup)
                 }
                 ActionButton {
@@ -1023,7 +1031,7 @@ Panel {
                   destructive: true
                   foreground: root.foreground
                   fontFamily: root.fontFamily
-                  enabled: root.presetService && !root.presetService.busy
+                  enabled: !!root.presetService
                   onClicked: root.confirmGroup = groupCard.modelData
                 }
               }
@@ -1094,7 +1102,7 @@ Panel {
                     label: assignmentRow.assignedWorkspace >= 0 ? "Update" : "Assign"
                     foreground: root.foreground
                     fontFamily: root.fontFamily
-                    enabled: root.presetService && !root.presetService.busy && assignmentRow.modelData.loadable
+                    enabled: root.presetService && assignmentRow.modelData.loadable
                       && /^[0-9]$/.test(workspaceField.text.trim())
                     onClicked: root.presetService.assignPreset(
                       groupCard.modelData.id, assignmentRow.modelData.id, Number(workspaceField.text.trim())
@@ -1106,7 +1114,7 @@ Panel {
                     foreground: root.foreground
                     fontFamily: root.fontFamily
                     visible: assignmentRow.assignedWorkspace >= 0
-                    enabled: root.presetService && !root.presetService.busy
+                    enabled: !!root.presetService
                     onClicked: root.presetService.unassignPreset(groupCard.modelData.id, assignmentRow.modelData.id)
                   }
                 }
@@ -1267,6 +1275,18 @@ Panel {
 
           Item { width: 1; height: Style.space(2) }
         }
+      }
+
+      // Keep each control's enabled state (and therefore its opacity) stable
+      // while a foreground command runs. This transparent shield prevents
+      // accidental double actions without making the whole panel flash.
+      MouseArea {
+        anchors.fill: parent
+        z: 100
+        visible: root.controlsLocked
+        enabled: visible
+        acceptedButtons: Qt.AllButtons
+        onWheel: function(wheel) { wheel.accepted = true }
       }
     }
   }
