@@ -2,7 +2,7 @@
 
 Save the application windows on a Hyprland workspace as a named preset, then cold-load that preset later. Combine presets into groups assigned to numbered workspaces and launch a complete multi-workspace setup in one action—or automatically once when the Hyprland session starts. Workspace Presets launches missing applications, tracks the new windows, and rebuilds the saved layout instead of assuming the windows are already open.
 
-This is a native Omarchy Quattro plugin: the bar widget and management panel run in `omarchy-shell`, while a bundled Python standard-library backend handles capture, validation, and restore orchestration. It does not install loose scripts, patch Omarchy menus, edit Hyprland configuration, run sudo, or use an install hook.
+This is a native Omarchy Quattro plugin: the bar widget and management panel run in `omarchy-shell`, while a bundled Python standard-library backend handles capture, validation, and restore orchestration.
 
 ## What it restores
 
@@ -15,7 +15,9 @@ This is a native Omarchy Quattro plugin: the bar widget and management panel run
 - Window groups, member order, active member, and lock state
 - Fullscreen/maximized, pseudotile, pinning, and static tags
 - Duplicate windows with the same class, tracked as independent slots
-- Omarchy shell panels, such as Omarchy Spotify, discovered from their plugin manifests
+- Omarchy shell panels discovered from their plugin manifests
+
+## Limitations
 
 Application-owned state is outside the compositor's control and is not restored. That includes browser tabs, open documents, unsaved editor buffers, and terminal processes. Apps may restore some of that themselves through their own session support.
 
@@ -30,35 +32,27 @@ The panel reports a clear compatibility error instead of attempting a partial re
 
 ## Install
 
-Review-first installation is recommended because all Omarchy shell plugins run as user code inside `omarchy-shell`:
-
-```bash
-omarchy plugin add https://github.com/blakestarling/omarchy-workspace-presets.git
-omarchy plugin enable blakestarling.workspace-presets right
-```
-
-For the normal interactive one-command install:
-
 ```bash
 omarchy plugin add https://github.com/blakestarling/omarchy-workspace-presets.git --enable
 ```
 
-For a non-interactive installation where you have already reviewed the repository:
+The plugin appears in the built-in bar. Left-click its workspace icon to open the preset manager; middle-click refreshes the list.
 
-```bash
-omarchy plugin add https://github.com/blakestarling/omarchy-workspace-presets.git --enable --yes
-```
-
-The plugin appears in the right section of the built-in bar. Left-click its workspace icon to open the preset manager; middle-click refreshes the list.
-
-The manager separates individual presets and preset groups into tabs. Each tab has contextual search and sorting by recent use, usage count, name, update time, or size (window count for presets and workspace count for groups).
-
-### Update, disable, and remove
+### Update
 
 ```bash
 omarchy plugin update blakestarling.workspace-presets
+```
+
+### Disable
+
+```bash
 omarchy plugin disable blakestarling.workspace-presets
-omarchy plugin enable blakestarling.workspace-presets right
+```
+
+### Remove
+
+```bash
 omarchy plugin remove blakestarling.workspace-presets
 ```
 
@@ -80,7 +74,7 @@ If `XDG_CONFIG_HOME` is set, the data directory is `$XDG_CONFIG_HOME/omarchy-wor
 4. If every window maps unambiguously to an installed desktop entry, the preset is immediately loadable.
 5. Otherwise, choose **Set up** and select a suggested desktop entry, enter a `.desktop` ID, or provide a custom argv JSON array such as `["foot"]`.
 
-A preset that needs launcher setup is saved as an explicit draft. It cannot be loaded until every window has a launch recipe; there are no `TODO` launch commands and unresolved windows are never silently skipped. Installed Omarchy panel plugins are matched by their manifest name and relaunched through `omarchy-shell`; existing drafts are rechecked automatically when the service starts.
+A preset that needs launcher setup is saved as an explicit draft. It cannot be loaded until every window has a launch recipe. Installed Omarchy panel plugins are matched by their manifest name and relaunched through `omarchy-shell`; existing drafts are rechecked automatically when the service starts.
 
 ### Load
 
