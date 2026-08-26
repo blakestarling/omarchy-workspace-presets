@@ -28,6 +28,7 @@ Item {
   property bool refreshAfterCurrent: false
 
   signal changed()
+  signal loadStarted()
 
   function initialize() {
     if (initialized || backendPath === "") return
@@ -162,6 +163,7 @@ Item {
         ["group-load", "--id", String(check.group.id), "--expected-token", String(check.token), "--confirmed"],
         "group-load", true
       )
+      loadStarted()
       return
     }
     if (!check.preset || !check.workspace) return
@@ -175,6 +177,7 @@ Item {
       "load",
       true
     )
+    loadStarted()
   }
 
   function confirmLoad(conflictPolicy) {

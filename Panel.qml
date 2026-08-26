@@ -63,6 +63,11 @@ Panel {
 
   function toggle() { opened ? close() : openFromHotkey() }
 
+  Connections {
+    target: root.presetService
+    function onLoadStarted() { root.close() }
+  }
+
   function workspaceFor(group, presetId) {
     var assignments = group && Array.isArray(group.assignments) ? group.assignments : []
     for (var index = 0; index < assignments.length; index++)

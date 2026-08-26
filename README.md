@@ -41,6 +41,23 @@ omarchy plugin add https://github.com/blakestarling/omarchy-workspace-presets.gi
 
 The plugin appears in the built-in bar. Left-click its workspace icon to open the preset manager; middle-click refreshes the list.
 
+### Optional keyboard shortcut
+
+`SUPER + ALT + P` is easy to remember as “Presets” and is unused by Omarchy's default bindings as of Omarchy 4.0. Add this line to `~/.config/hypr/bindings.lua`:
+
+```lua
+o.bind("SUPER + ALT + P", "Workspace Presets", "omarchy-shell shell toggle blakestarling.workspace-presets")
+```
+
+Hyprland normally reloads the file automatically. You can apply and validate it explicitly with:
+
+```bash
+hyprctl reload
+hyprctl configerrors
+```
+
+If you have added personal bindings, check `omarchy menu keybindings --print` first. If the shortcut is already used, choose another key combination or call `hl.unbind("SUPER + ALT + P")` before the new `o.bind` and intentionally replace the old action.
+
 ### Update
 
 ```bash
@@ -91,6 +108,8 @@ This detection deliberately does not infer commands from shell history. Idle she
 4. Confirm the replacement.
 
 Press **Escape** at any time to close the Workspace Presets panel and cancel a pending load confirmation.
+
+The panel closes automatically when a confirmed preset or preset-group load begins, leaving the workspace unobstructed while applications launch.
 
 Workspace Presets validates all launchers before closing anything. It then sends normal close requests to current-workspace applications and waits. If an application refuses to close—for example, because it is showing an unsaved-changes dialog—the restore stops and never force-kills it.
 

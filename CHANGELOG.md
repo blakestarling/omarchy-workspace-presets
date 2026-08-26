@@ -2,6 +2,11 @@
 
 All notable changes to Workspace Presets are documented here.
 
+## 1.6.1 - 2026-08-26
+
+- Close the management panel automatically as soon as a confirmed preset or preset-group load begins.
+- Document an unused, memorable Super+Alt+P shortcut for toggling the panel.
+
 ## 1.6.0 - 2026-08-26
 
 - Detect programs started manually inside supported terminals by inspecting the controlling TTY's foreground process group.
