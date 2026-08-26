@@ -2,6 +2,12 @@
 
 All notable changes to Workspace Presets are documented here.
 
+## 1.7.1 - 2026-08-26
+
+- Verify tiled window state after applications finish their late startup surface updates.
+- Deterministically rebuild the tiled layout if an application reasserts floating after the initial restore pass.
+- Report an explicit restore error instead of silently succeeding if a window cannot be kept tiled.
+
 ## 1.7.0 - 2026-08-26
 
 - Add an optional confirmation toggle for the selected startup preset group.
