@@ -14,6 +14,22 @@ from workspace_presets.desktop import (
 
 
 class DesktopEntryTests(unittest.TestCase):
+    @staticmethod
+    def _proc_process(
+        root: Path, pid: int, *, ppid: int, pgrp: int, session: int,
+        tty: int, tpgid: int, argv: list[str], cwd: str = "/home/blake",
+    ) -> Path:
+        process = root / str(pid)
+        process.mkdir()
+        (process / "cmdline").write_bytes(
+            b"\0".join(part.encode() for part in argv) + b"\0"
+        )
+        (process / "stat").write_text(
+            f"{pid} ({Path(argv[0]).name}) S {ppid} {pgrp} {session} {tty} {tpgid} 0 0 0\n"
+        )
+        os.symlink(cwd, process / "cwd")
+        return process
+
     def test_terminal_program_and_working_directory_become_launch_recipe(self):
         with tempfile.TemporaryDirectory() as directory:
             process = Path(directory) / "42"
@@ -43,6 +59,68 @@ class DesktopEntryTests(unittest.TestCase):
             self.assertIsNone(
                 terminal_process_launcher(7, "foot", proc_root=Path(directory))
             )
+
+    def test_manually_started_foreground_program_becomes_launch_recipe(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._proc_process(
+                root, 7, ppid=1, pgrp=7, session=7, tty=0, tpgid=-1,
+                argv=["foot", "--app-id=TUI.tile"],
+            )
+            self._proc_process(
+                root, 8, ppid=7, pgrp=8, session=8, tty=34816, tpgid=9,
+                argv=["/usr/bin/zsh"],
+            )
+            self._proc_process(
+                root, 9, ppid=8, pgrp=9, session=8, tty=34816, tpgid=9,
+                argv=["herdr", "--theme", "dark"], cwd="/tmp",
+            )
+
+            result = terminal_process_launcher(7, "foot", proc_root=root)
+
+            self.assertEqual(result, ({
+                "kind": "command",
+                "argv": [
+                    "foot", "--app-id=TUI.tile", "-e", "herdr", "--theme", "dark",
+                ],
+                "cwd": "/tmp",
+            }, "herdr"))
+
+    def test_idle_shell_is_not_mistaken_for_a_foreground_program(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._proc_process(
+                root, 7, ppid=1, pgrp=7, session=7, tty=0, tpgid=-1,
+                argv=["foot"],
+            )
+            self._proc_process(
+                root, 8, ppid=7, pgrp=8, session=8, tty=34816, tpgid=8,
+                argv=["-zsh"], cwd="/tmp",
+            )
+
+            self.assertIsNone(terminal_process_launcher(7, "foot", proc_root=root))
+
+    def test_pipeline_is_left_unresolved_instead_of_partially_replayed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._proc_process(
+                root, 7, ppid=1, pgrp=7, session=7, tty=0, tpgid=-1,
+                argv=["foot"],
+            )
+            self._proc_process(
+                root, 8, ppid=7, pgrp=8, session=8, tty=34816, tpgid=9,
+                argv=["zsh"],
+            )
+            self._proc_process(
+                root, 9, ppid=8, pgrp=9, session=8, tty=34816, tpgid=9,
+                argv=["journalctl", "-f"],
+            )
+            self._proc_process(
+                root, 10, ppid=8, pgrp=9, session=8, tty=34816, tpgid=9,
+                argv=["less"],
+            )
+
+            self.assertIsNone(terminal_process_launcher(7, "foot", proc_root=root))
 
     def test_exact_startup_class_is_resolved(self):
         with tempfile.TemporaryDirectory() as directory:

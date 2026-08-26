@@ -2,6 +2,12 @@
 
 All notable changes to Workspace Presets are documented here.
 
+## 1.6.0 - 2026-08-26
+
+- Detect programs started manually inside supported terminals by inspecting the controlling TTY's foreground process group.
+- Preserve the foreground program's exact argv and working directory without depending on shell history.
+- Keep idle shells, remote or multiplexer sessions, ambiguous terminal trees, and pipelines on the normal terminal fallback instead of guessing an unsafe partial command.
+
 ## 1.5.0 - 2026-08-26
 
 - Launch unrelated saved applications concurrently instead of waiting for each application before starting the next one.

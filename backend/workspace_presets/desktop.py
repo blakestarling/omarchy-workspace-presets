@@ -21,6 +21,12 @@ TERMINAL_EXECUTABLES = {
     "kitty",
     "wezterm-gui",
 }
+SHELL_EXECUTABLES = {
+    "bash", "dash", "elvish", "fish", "ksh", "nu", "sh", "xonsh", "zsh",
+}
+SESSION_EXECUTABLES = {
+    "mosh-client", "ssh", "tmux", "zellij",
+}
 
 
 @dataclass(frozen=True)
@@ -156,40 +162,152 @@ def process_executable(pid: object) -> str:
         return ""
 
 
+def _process_argv(process: Path) -> list[str] | None:
+    try:
+        raw = (process / "cmdline").read_bytes()
+    except OSError:
+        return None
+    if not raw or len(raw) > 65536:
+        return None
+    argv = [
+        part.decode("utf-8", errors="replace")
+        for part in raw.split(b"\0")
+        if part
+    ]
+    return argv if 0 < len(argv) <= 256 else None
+
+
+def _process_cwd(process: Path) -> str | None:
+    try:
+        cwd = str((process / "cwd").resolve(strict=True))
+    except OSError:
+        return None
+    return cwd if Path(cwd).is_absolute() else None
+
+
+def _process_stat(process: Path) -> dict | None:
+    """Read only the process-tree and controlling-TTY fields from proc stat."""
+    try:
+        raw = (process / "stat").read_text(encoding="utf-8")
+        pid = int(process.name)
+        end = raw.rfind(")")
+        if end < 0:
+            return None
+        fields = raw[end + 2:].split()
+        if len(fields) < 6:
+            return None
+        return {
+            "pid": pid,
+            "ppid": int(fields[1]),
+            "pgrp": int(fields[2]),
+            "session": int(fields[3]),
+            "tty": int(fields[4]),
+            "tpgid": int(fields[5]),
+        }
+    except (OSError, UnicodeError, ValueError):
+        return None
+
+
+def _foreground_terminal_process(terminal_pid: int, proc_root: Path) -> Path | None:
+    """Find one unambiguous foreground job below a terminal emulator process."""
+    records: dict[int, dict] = {}
+    try:
+        entries = list(proc_root.iterdir())
+    except OSError:
+        return None
+    for process in entries:
+        if process.name.isdigit():
+            stat = _process_stat(process)
+            if stat:
+                records[stat["pid"]] = stat
+
+    def descendant_of(pid: int, ancestor: int) -> bool:
+        seen: set[int] = set()
+        while pid in records and pid not in seen:
+            if pid == ancestor:
+                return True
+            seen.add(pid)
+            pid = records[pid]["ppid"]
+        return False
+
+    candidates: list[Path] = []
+    seen_groups: set[tuple[int, int]] = set()
+    for record in records.values():
+        if (
+            record["tty"] == 0
+            or record["tpgid"] <= 0
+            or not descendant_of(record["pid"], terminal_pid)
+        ):
+            continue
+        group = (record["tty"], record["tpgid"])
+        if group in seen_groups:
+            continue
+        seen_groups.add(group)
+        leader = records.get(record["tpgid"])
+        if not leader or not descendant_of(leader["pid"], terminal_pid):
+            continue
+        leader_path = proc_root / str(leader["pid"])
+        argv = _process_argv(leader_path)
+        if not argv:
+            continue
+        executable = Path(argv[0]).name.casefold().lstrip("-")
+        shell_has_command = len(argv) > 1 and (
+            argv[1] == "-c" or not argv[1].startswith("-")
+        )
+        if (
+            executable in SESSION_EXECUTABLES
+            or (executable in SHELL_EXECUTABLES and not shell_has_command)
+        ):
+            continue
+        # Multiple foreground siblings normally indicate a shell pipeline. Saving
+        # only its process-group leader would silently change the command.
+        if any(
+            other["pid"] != leader["pid"]
+            and other["pgrp"] == leader["pgrp"]
+            and other["ppid"] == leader["ppid"]
+            for other in records.values()
+        ):
+            continue
+        candidates.append(leader_path)
+    return candidates[0] if len(candidates) == 1 else None
+
+
 def terminal_process_launcher(
     pid: object,
     executable: str,
     *,
     proc_root: Path = Path("/proc"),
 ) -> tuple[dict, str] | None:
-    """Capture an explicit command passed to a known terminal emulator.
+    """Capture an explicit or currently foreground terminal command.
 
     Omarchy's xdg-terminal-exec integration uses ``-e`` before the program.
     Replaying the terminal's own argv preserves terminal-specific app IDs,
-    titles, and wrappers such as omarchy-launch-docker-tui.
+    titles, and wrappers such as omarchy-launch-docker-tui. When the terminal
+    started as a shell, its controlling TTY identifies a manually launched
+    foreground program without relying on shell history.
     """
     if Path(executable).name.casefold() not in TERMINAL_EXECUTABLES:
         return None
     try:
-        process = proc_root / str(int(pid))
-        raw = (process / "cmdline").read_bytes()
-        if not raw or len(raw) > 65536:
+        terminal_pid = int(pid)
+        process = proc_root / str(terminal_pid)
+        argv = _process_argv(process)
+        if not argv:
             return None
-        argv = [
-            part.decode("utf-8", errors="replace")
-            for part in raw.split(b"\0")
-            if part
-        ]
-        if not argv or len(argv) > 256:
+        if "-e" in argv:
+            marker = argv.index("-e")
+            command = argv[marker + 1:]
+            cwd = _process_cwd(process)
+        else:
+            foreground = _foreground_terminal_process(terminal_pid, proc_root)
+            if foreground is None:
+                return None
+            command = _process_argv(foreground)
+            cwd = _process_cwd(foreground)
+            argv = [*argv, "-e", *(command or [])]
+        if not command or not cwd:
             return None
-        marker = argv.index("-e")
-        command = argv[marker + 1:]
-        if not command:
-            return None
-        cwd = str((process / "cwd").resolve(strict=True))
     except (OSError, TypeError, ValueError):
-        return None
-    if not Path(cwd).is_absolute():
         return None
     return {"kind": "command", "argv": argv, "cwd": cwd}, Path(command[0]).name
 

@@ -79,7 +79,9 @@ If `XDG_CONFIG_HOME` is set, the data directory is `$XDG_CONFIG_HOME/omarchy-wor
 
 A preset that needs launcher setup is saved as an explicit draft. It cannot be loaded until every window has a launch recipe. Installed Omarchy panel plugins are matched by their manifest name and relaunched through `omarchy-shell`; existing drafts are rechecked automatically when the service starts.
 
-Terminals launched with an explicit program are detected automatically in Foot, Alacritty, Kitty, Ghostty, and WezTerm. For example, Herdr is saved as its terminal invocation ending in `-e herdr`, while Docker View retains `-e omarchy-launch-docker-tui` so Omarchy's Docker-access wrapper still runs. Overwrite presets captured by an older plugin version to replace their generic terminal launchers with this richer recipe.
+Foreground programs are detected automatically in Foot, Alacritty, Kitty, Ghostty, and WezTerm, whether the program was supplied when the terminal opened or started manually from its shell. The plugin reads the terminal's controlling TTY and foreground process group, then preserves that program's exact argv and working directory. For example, Herdr is saved as a terminal invocation ending in `-e herdr`, while Docker View retains `-e omarchy-launch-docker-tui` when that wrapper is still present in the running process tree.
+
+This detection deliberately does not infer commands from shell history. Idle shells restore as normal terminals, while pipelines, ambiguous process trees, SSH sessions, and tmux or zellij sessions fall back to the terminal's normal launcher instead of saving a misleading partial command. Captured commands recreate the program but cannot preserve unsaved in-memory application state. Overwrite presets captured by an older plugin version to replace their generic terminal launchers with the richer recipe.
 
 ### Load
 
