@@ -2,6 +2,12 @@
 
 All notable changes to Workspace Presets are documented here.
 
+## 1.7.4 - 2026-08-26
+
+- Replay each Scrolling workspace topology in one compositor transaction so concurrently loaded preset-group workspaces cannot redirect one another's focus-dependent layout commands.
+- Reorder singleton columns to the saved slot order before rebuilding multi-window columns.
+- Preserve the user's focused window and pointer position around atomic Scrolling replay.
+
 ## 1.7.3 - 2026-08-26
 
 - Synchronize focus before issuing layout-dependent replay commands so Hyprland operates on the intended stable window rather than the previously active node or scrolling column.

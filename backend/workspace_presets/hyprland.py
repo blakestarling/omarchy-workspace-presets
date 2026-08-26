@@ -255,6 +255,75 @@ class Hyprland:
     def layout_message(self, message: str) -> None:
         self.lua_dispatch(f"hl.dsp.layout({self.lua_string(message)})")
 
+    def restore_scrolling_layout(
+        self, layout: dict, windows: dict[str, dict]
+    ) -> None:
+        """Replay Scrolling topology as one compositor-side transaction.
+
+        Scrolling layout messages resolve their target from Hyprland's single
+        global focused window. Keeping ordering, grouping, and sizing in one
+        REPL request prevents concurrent preset-group workspaces from stealing
+        that focus between commands.
+        """
+        columns = [
+            {
+                "width": float(column.get("width", 0.5)),
+                "slots": list(column.get("slots", [])),
+            }
+            for column in layout.get("columns", [])
+            if column.get("slots")
+        ]
+        order = [slot for column in columns for slot in column["slots"]]
+        selectors = [self.selector(windows[slot]) for slot in order]
+        if not selectors:
+            return
+
+        lua_selectors = "{" + ",".join(self.lua_string(value) for value in selectors) + "}"
+        operations: list[str] = []
+        cursor = 0
+        for column in columns:
+            anchor = self.lua_string(selectors[cursor])
+            width_command = self.lua_string(
+                f"colresize {column['width']:.6f}"
+            )
+            operations.append(f"run(hl.dsp.focus({{window={anchor}}}))")
+            operations.extend(
+                "run(hl.dsp.layout('consume'))"
+                for _ in column["slots"][1:]
+            )
+            operations.append(f"run(hl.dsp.layout({width_command}))")
+            cursor += len(column["slots"])
+
+        offset = float(layout.get("tapeOffset", 0))
+        if abs(offset) >= 1:
+            operations.append(
+                f"run(hl.dsp.focus({{window={self.lua_string(selectors[0])}}}))"
+            )
+            operations.append(
+                f"run(hl.dsp.layout({self.lua_string(f'move {offset:.2f}')}))"
+            )
+
+        body = "; ".join(operations)
+        code = (
+            "local old=hl.get_active_window(); local oldsel=old and string.format('stableid:%x',old.stable_id) or nil; "
+            "local cursor=hl.get_cursor_pos(); "
+            "local function run(d) local r=hl.dispatch(d); if type(r)=='table' and r.ok==false then error(tostring(r.error)) end end; "
+            f"local sels={lua_selectors}; "
+            "local function window(sel) local w=hl.get_window(sel); if not w then error('saved window disappeared during Scrolling replay') end; return w end; "
+            "local ok,err=pcall(function() "
+            "for i,sel in ipairs(sels) do local desired=window(sel); local col=desired.layout and desired.layout.column; "
+            "if not col then error('saved window is not in the Scrolling layout') end; "
+            "if col.index~=i-1 then local other=nil; for _,candidate in ipairs(sels) do local w=window(candidate); "
+            "if w.layout and w.layout.column and w.layout.column.index==i-1 then other=candidate; break end end; "
+            "if not other then error('could not locate Scrolling column during replay') end; "
+            "run(hl.dsp.window.swap({window=sel,target=other})) end end; "
+            f"{body} end); "
+            "if oldsel and hl.get_window(oldsel) then hl.dispatch(hl.dsp.focus({window=oldsel})) end; "
+            "if cursor then hl.dispatch(hl.dsp.cursor.move({x=cursor.x,y=cursor.y})) end; "
+            "if not ok then error(err) end"
+        )
+        self.repl(code)
+
     def set_workspace_layout(self, workspace_name: str, layout: dict) -> None:
         if not workspace_name:
             raise HyprlandError("Unsafe workspace name")

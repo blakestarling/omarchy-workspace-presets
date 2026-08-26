@@ -919,11 +919,12 @@ class WorkspaceEngine:
         # leak into the final layout order.
         previous = None
         for slot_id in order:
-            if previous is not None:
+            if previous is not None and name != "scrolling":
                 self.hypr.focus_for_layout(previous)
             window = windows[slot_id]
             self.hypr.set_floating(window, False)
-            self.hypr.focus(window)
+            if name != "scrolling":
+                self.hypr.focus(window)
             previous = window
         if name == "master":
             orientation = str(layout.get("orientation", "left"))
@@ -939,19 +940,7 @@ class WorkspaceEngine:
                 self.hypr.layout_message(f"mfact {float(layout.get('masterFactor', 0.55)):.6f} exact")
             return
         if name == "scrolling":
-            for column in layout.get("columns", []):
-                members = list(column.get("slots", []))
-                if not members:
-                    continue
-                self.hypr.focus_for_layout(windows[members[0]])
-                for _ in members[1:]:
-                    self.hypr.layout_message("consume")
-                self.hypr.focus_for_layout(windows[members[0]])
-                self.hypr.layout_message(f"colresize {float(column.get('width', 0.5)):.6f}")
-            offset = float(layout.get("tapeOffset", 0))
-            if order and abs(offset) >= 1:
-                self.hypr.focus_for_layout(windows[order[0]])
-                self.hypr.layout_message(f"move {offset:.2f}")
+            self.hypr.restore_scrolling_layout(layout, windows)
             return
         if name == "monocle":
             return

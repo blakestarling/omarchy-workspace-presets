@@ -45,6 +45,7 @@ class FakeHyprland:
     def focus(self, window): self.actions.append(("focus", window["stableId"]))
     def focus_for_layout(self, window): self.actions.append(("layout-focus", window["stableId"]))
     def layout_message(self, command): self.actions.append(("layout-message", command))
+    def restore_scrolling_layout(self, layout, windows): self.actions.append(("scrolling-layout", layout, windows))
     def focus_workspace(self, workspace): self.actions.append(("focus-workspace", str(workspace)))
 
 
@@ -356,7 +357,7 @@ class EngineRestoreTests(unittest.TestCase):
             ("focus", "13"),
         ])
 
-    def test_scrolling_columns_use_synchronized_focus_before_consume(self):
+    def test_scrolling_columns_replay_in_one_atomic_operation(self):
         fake = FakeHyprland()
         engine = WorkspaceEngine(hyprland=fake)
         windows = {
@@ -376,8 +377,12 @@ class EngineRestoreTests(unittest.TestCase):
             windows,
         )
 
-        consume_index = fake.actions.index(("layout-message", "consume"))
-        self.assertEqual(fake.actions[consume_index - 1], ("layout-focus", "11"))
+        self.assertEqual(fake.actions[:2], [
+            ("float", "11", False),
+            ("float", "12", False),
+        ])
+        self.assertEqual(fake.actions[2][0], "scrolling-layout")
+        self.assertNotIn(("layout-message", "consume"), fake.actions)
 
     def test_omarchy_panel_launcher_uses_shell_summon_ipc(self):
         with patch("workspace_presets.engine.subprocess.Popen") as popen:

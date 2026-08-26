@@ -103,6 +103,32 @@ class HyprlandLuaDispatcherTests(unittest.TestCase):
         self.assertIn('layout="master"', args[2])
         self.assertIn('orientation="right"', args[2])
 
+    def test_scrolling_replay_is_one_focus_preserving_transaction(self):
+        hypr = RecordingHyprland()
+        hypr.restore_scrolling_layout(
+            {
+                "name": "scrolling",
+                "columns": [{"width": 0.5, "slots": ["one", "two"]}],
+                "tapeOffset": 12,
+            },
+            {
+                "one": {"stableId": "11"},
+                "two": {"stableId": "12"},
+            },
+        )
+
+        self.assertEqual(len(hypr.calls), 1)
+        args = hypr.calls[0][0]
+        self.assertEqual(args[:2], ["hyprctl", "repl"])
+        lua = args[2]
+        self.assertIn('local sels={"stableid:11","stableid:12"}', lua)
+        self.assertIn("hl.dsp.window.swap({window=sel,target=other})", lua)
+        self.assertEqual(lua.count("hl.dsp.layout('consume')"), 1)
+        self.assertIn('hl.dsp.layout("colresize 0.500000")', lua)
+        self.assertIn('hl.dsp.layout("move 12.00")', lua)
+        self.assertIn("hl.dsp.focus({window=oldsel})", lua)
+        self.assertIn("hl.dsp.cursor.move", lua)
+
     def test_exec_routes_new_windows_to_a_workspace_silently(self):
         hypr = RecordingHyprland()
 
