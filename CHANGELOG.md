@@ -2,6 +2,12 @@
 
 All notable changes to Workspace Presets are documented here.
 
+## 1.8.0 - 2026-08-26
+
+- Move manual preset and preset-group load warnings into a focused confirmation panel that opens after the main panel closes.
+- Reuse the dedicated confirmation panel for optional startup-group confirmation, with Escape, cancel, and outside-click dismissal.
+- Keep safe loads frictionless: when no workspace replacement is required, loading still begins immediately without opening confirmation UI.
+
 ## 1.7.6 - 2026-08-26
 
 - Accept Hyprland's hexadecimal stable window IDs when capturing layout metadata, preventing Scrolling presets from falling back to nondeterministic client enumeration order.

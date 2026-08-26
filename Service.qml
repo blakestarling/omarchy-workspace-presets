@@ -29,7 +29,7 @@ Item {
   property int loadStartedSerial: 0
 
   signal changed()
-  signal startupConfirmationRequested()
+  signal confirmationRequested()
 
   function initialize() {
     if (initialized || backendPath === "") return
@@ -276,6 +276,7 @@ Item {
       } else {
         pendingPreflight = check
         statusMessage = "Confirm workspace replacement"
+        confirmationRequested()
       }
     } else {
       if (operation === "set-launcher") selectedDetails = null
@@ -283,7 +284,7 @@ Item {
         if (event.data && event.data.confirmationRequired && event.data.preflight) {
           pendingPreflight = event.data.preflight
           statusMessage = "Confirm startup preset group"
-          startupConfirmationRequested()
+          confirmationRequested()
         } else if (event.data && event.data.launched) {
           statusMessage = "Startup preset group loaded"
         } else statusMessage = "Ready"

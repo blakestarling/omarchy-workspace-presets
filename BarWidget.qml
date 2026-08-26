@@ -8,11 +8,13 @@ BarWidget {
   moduleName: "blakestarling.workspace-presets"
 
   readonly property var presetService: bar?.shell?.serviceFor(moduleName)
-  readonly property bool opened: panelLoader.item ? panelLoader.item.opened === true : false
-  readonly property bool popoutSwitchClosing: panelLoader.item ? panelLoader.item.popoutSwitchClosing === true : false
+  readonly property bool opened: (panelLoader.item && panelLoader.item.opened === true)
+    || (confirmationLoader.item && confirmationLoader.item.opened === true)
+  readonly property bool popoutSwitchClosing:
+    (panelLoader.item && panelLoader.item.popoutSwitchClosing === true)
+    || (confirmationLoader.item && confirmationLoader.item.popoutSwitchClosing === true)
 
-  function injectPanel() {
-    var target = panelLoader.item
+  function injectPanel(target) {
     if (!target) return
     if ("bar" in target) target.bar = root.bar
     if ("settings" in target) target.settings = root.settings
@@ -20,21 +22,53 @@ BarWidget {
     if ("hostWidget" in target) target.hostWidget = root
   }
 
-  function open() { if (panelLoader.item) panelLoader.item.openFromHotkey() }
-  function close() { if (panelLoader.item) panelLoader.item.close() }
-  function togglePanel() { if (panelLoader.item) panelLoader.item.toggle() }
-  function closeForPopoutSwitch() { if (panelLoader.item) panelLoader.item.closeForPopoutSwitch() }
+  function open() {
+    if (root.presetService && root.presetService.pendingPreflight) showConfirmation()
+    else if (panelLoader.item) panelLoader.item.openFromHotkey()
+  }
+  function close() {
+    confirmationDelay.stop()
+    if (confirmationLoader.item && confirmationLoader.item.opened)
+      confirmationLoader.item.close()
+    if (panelLoader.item && panelLoader.item.opened) panelLoader.item.close()
+  }
+  function togglePanel() { root.opened ? root.close() : root.open() }
+  function closeForPopoutSwitch() {
+    confirmationDelay.stop()
+    if (confirmationLoader.item && confirmationLoader.item.opened)
+      confirmationLoader.item.closeForPopoutSwitch()
+    if (panelLoader.item && panelLoader.item.opened)
+      panelLoader.item.closeForPopoutSwitch()
+  }
 
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
-  onBarChanged: injectPanel()
-  onSettingsChanged: injectPanel()
+  onBarChanged: {
+    injectPanel(panelLoader.item)
+    injectPanel(confirmationLoader.item)
+  }
+  onSettingsChanged: {
+    injectPanel(panelLoader.item)
+    injectPanel(confirmationLoader.item)
+  }
 
-  function showStartupConfirmation() {
-    if (!root.presetService || !root.presetService.pendingPreflight
-        || root.presetService.pendingPreflight.startupConfirmation !== true) return
-    if (panelLoader.item) panelLoader.item.activeTab = "groups"
-    root.open()
+  function showConfirmation() {
+    if (!root.presetService || !root.presetService.pendingPreflight) return
+    if (confirmationLoader.item && confirmationLoader.item.opened) return
+    if (panelLoader.item && panelLoader.item.opened) {
+      panelLoader.item.closeForConfirmation()
+      confirmationDelay.restart()
+    } else if (confirmationLoader.item) {
+      confirmationLoader.item.open()
+    }
+  }
+
+  Timer {
+    id: confirmationDelay
+    interval: 150
+    repeat: false
+    onTriggered: if (root.presetService && root.presetService.pendingPreflight
+      && confirmationLoader.item) confirmationLoader.item.open()
   }
 
   Connections {
@@ -42,7 +76,7 @@ BarWidget {
     // The widget may be constructed one tick before the service registry has
     // published this plugin's service object.
     ignoreUnknownSignals: true
-    function onStartupConfirmationRequested() { root.showStartupConfirmation() }
+    function onConfirmationRequested() { root.showConfirmation() }
   }
 
   Loader {
@@ -51,9 +85,22 @@ BarWidget {
     source: Qt.resolvedUrl("Panel.qml")
     visible: false
     onLoaded: {
-      root.injectPanel()
-      Qt.callLater(root.injectPanel)
-      Qt.callLater(root.showStartupConfirmation)
+      root.injectPanel(panelLoader.item)
+      Qt.callLater(function() { root.injectPanel(panelLoader.item) })
+    }
+  }
+
+  Loader {
+    id: confirmationLoader
+    active: true
+    source: Qt.resolvedUrl("ConfirmationPanel.qml")
+    visible: false
+    onLoaded: {
+      root.injectPanel(confirmationLoader.item)
+      Qt.callLater(function() {
+        root.injectPanel(confirmationLoader.item)
+        root.showConfirmation()
+      })
     }
   }
 

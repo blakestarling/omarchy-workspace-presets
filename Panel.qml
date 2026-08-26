@@ -54,7 +54,7 @@ Panel {
     if (presetService) presetService.refresh()
   }
 
-  function close() {
+  function resetLocalState() {
     editingId = ""
     confirmAction = ""
     confirmPreset = null
@@ -63,8 +63,18 @@ Panel {
     assignmentDrafts = ({})
     if (presetService) {
       presetService.selectedDetails = null
-      if (presetService.pendingPreflight !== null) presetService.cancelPreflight()
     }
+  }
+
+  function closeForConfirmation() {
+    resetLocalState()
+    controller.hide()
+  }
+
+  function close() {
+    resetLocalState()
+    if (presetService && presetService.pendingPreflight !== null)
+      presetService.cancelPreflight()
     controller.hide()
   }
 
@@ -560,95 +570,6 @@ Panel {
               color: root.foreground
               font.family: root.fontFamily
               font.pixelSize: Style.font.bodySmall
-            }
-          }
-        }
-
-        BorderSurface {
-          width: parent.width
-          visible: root.presetService && root.presetService.pendingPreflight !== null
-          implicitHeight: confirmLoadColumn.implicitHeight + Style.space(20)
-          radius: Style.cornerRadius
-          color: Qt.rgba(Color.urgent.r, Color.urgent.g, Color.urgent.b, 0.10)
-          borderSpec: Border.flat(Color.urgent, 1)
-
-          Column {
-            id: confirmLoadColumn
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            anchors.margins: Style.space(10)
-            spacing: Style.space(8)
-            Text {
-              text: root.presetService && root.presetService.pendingPreflight
-                && root.presetService.pendingPreflight.startupConfirmation === true
-                ? "Launch ‘" + String(root.presetService.pendingPreflight.group.name || "startup group") + "’?"
-                : root.presetService && root.presetService.pendingPreflight
-                  && root.presetService.pendingPreflight.kind === "group"
-                  ? "Replace these workspaces?" : "Replace this workspace?"
-              color: root.foreground
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.subtitle
-              font.bold: true
-            }
-            Text {
-              width: parent.width
-              wrapMode: Text.Wrap
-              text: {
-                if (!root.presetService || !root.presetService.pendingPreflight) return ""
-                var check = root.presetService.pendingPreflight
-                if (check.kind === "group") {
-                  if (check.startupConfirmation === true) {
-                    var startupMessage = "This startup group targets "
-                      + String((check.targets || []).length) + " workspace(s). "
-                    if (Number(check.windowCountToClose || 0) > 0)
-                      startupMessage += String(check.windowCountToClose) + " existing window(s) will receive normal close requests. "
-                    else startupMessage += "Its target workspaces are currently clear. "
-                    return startupMessage
-                      + "Every target was validated, and applications that refuse to close will never be force-killed. "
-                      + "Cancel or press Escape to skip this launch for the current session."
-                  }
-                  var groupMessage = String(check.windowCountToClose || 0) + " window(s) across "
-                    + String((check.targets || []).length) + " workspace(s) will receive normal close requests. "
-                    + "Every target was validated before this confirmation. Applications that refuse to close will never be force-killed."
-                  return groupMessage
-                }
-                var workspaceName = check.workspace ? String(check.workspace.name) : "current"
-                var message = (check.windowsToClose || []).length + " window(s) on workspace " + workspaceName + " will receive normal close requests."
-                if ((check.conflicts || []).length > 0)
-                  message += " " + check.conflicts.length + " matching window(s) already exist on other workspaces."
-                return message + " Loading aborts if the active workspace changes. Applications that refuse to close will never be force-killed."
-              }
-              color: root.foreground
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.bodySmall
-            }
-            Row {
-              spacing: Style.space(8)
-              ActionButton {
-                label: "Cancel"
-                foreground: root.foreground
-                fontFamily: root.fontFamily
-                onClicked: root.presetService.cancelPreflight()
-              }
-              ActionButton {
-                label: root.presetService && root.presetService.pendingPreflight
-                  && root.presetService.pendingPreflight.startupConfirmation === true
-                  ? "Launch group" : "Launch new"
-                foreground: root.foreground
-                fontFamily: root.fontFamily
-                destructive: true
-                onClicked: root.presetService.confirmLoad("launch-new")
-              }
-              ActionButton {
-                label: "Move existing"
-                foreground: root.foreground
-                fontFamily: root.fontFamily
-                destructive: true
-                visible: root.presetService && root.presetService.pendingPreflight && (root.presetService.pendingPreflight.conflicts || []).length > 0
-                  && root.presetService.pendingPreflight.kind !== "group"
-                onClicked: root.presetService.confirmLoad("move-existing")
-              }
             }
           }
         }

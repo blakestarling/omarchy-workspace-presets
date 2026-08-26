@@ -106,10 +106,10 @@ This detection deliberately does not infer commands from shell history. Idle she
 
 1. Choose **Load** on a ready preset.
 2. If the current workspace is empty, loading starts immediately after validation. Matching windows on other workspaces are left untouched and new instances are launched.
-3. Otherwise, review how many current windows will close. If matching windows exist on other workspaces, you can choose whether to launch new instances or move those existing windows. Nothing is moved silently.
+3. Otherwise, the main panel closes and a focused confirmation panel shows how many current windows will close. If matching windows exist on other workspaces, you can choose whether to launch new instances or move those existing windows. Nothing is moved silently.
 4. Confirm the replacement.
 
-Press **Escape** at any time to close the Workspace Presets panel and cancel a pending load confirmation.
+Press **Escape** in either panel to close it. Closing the confirmation panel cancels the pending load.
 
 The panel closes automatically when a confirmed preset or preset-group load begins, leaving the workspace unobstructed while applications launch.
 
@@ -141,7 +141,7 @@ Groups can be renamed, reassigned, and deleted without deleting their presets. A
 
 Choose **Launch on startup** on a complete group. Only one group can hold this setting, so enabling another transfers it. The plugin runs the selected group once when its service first starts in a new Hyprland session. A session-scoped guard prevents an `omarchy-shell` reload or plugin rescan from launching the group again. Enabling the setting does not immediately launch the group; it takes effect on the next Hyprland session.
 
-Enable **Confirm before startup launch** on the selected startup group if you do not want it to launch unconditionally. At the next login, the plugin opens its panel with a preflight summary and waits for **Launch group**. Choosing **Cancel**, pressing **Escape**, or closing the panel skips the group for that session; shell reloads will not prompt again until the next login.
+Enable **Confirm before startup launch** on the selected startup group if you do not want it to launch unconditionally. At the next login, the plugin opens the same focused confirmation panel used by manual loads and waits for **Launch group**. Choosing **Skip this session**, pressing **Escape**, or closing the panel skips the group for that session; shell reloads will not prompt again until the next login.
 
 Startup restore is intentionally equivalent to a confirmed group launch: assigned workspaces are replaced with normal close requests and applications are never force-killed. If a launcher or preset becomes invalid, startup restore reports the error rather than partially skipping it.
 

@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "blakestarling.workspace-presets",
   "name": "Workspace Presets",
-  "version": "1.7.6",
+  "version": "1.8.0",
   "author": "Blake Starling",
   "license": "MIT",
   "description": "Save exact workspace layouts and launch multi-workspace preset groups.",
