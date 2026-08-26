@@ -1,3 +1,4 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -8,10 +9,41 @@ from workspace_presets.desktop import (
     resolve_launcher,
     scan_desktop_entries,
     scan_omarchy_panel_plugins,
+    terminal_process_launcher,
 )
 
 
 class DesktopEntryTests(unittest.TestCase):
+    def test_terminal_program_and_working_directory_become_launch_recipe(self):
+        with tempfile.TemporaryDirectory() as directory:
+            process = Path(directory) / "42"
+            process.mkdir()
+            (process / "cmdline").write_bytes(
+                b"foot\0--app-id=TUI.tile\0-e\0omarchy-launch-docker-tui\0"
+            )
+            os.symlink("/home/blake", process / "cwd")
+
+            result = terminal_process_launcher(42, "foot", proc_root=Path(directory))
+
+            self.assertEqual(result, ({
+                "kind": "command",
+                "argv": [
+                    "foot", "--app-id=TUI.tile", "-e", "omarchy-launch-docker-tui",
+                ],
+                "cwd": "/home/blake",
+            }, "omarchy-launch-docker-tui"))
+
+    def test_plain_shell_terminal_keeps_normal_desktop_resolution(self):
+        with tempfile.TemporaryDirectory() as directory:
+            process = Path(directory) / "7"
+            process.mkdir()
+            (process / "cmdline").write_bytes(b"foot\0--working-directory=/tmp\0")
+            os.symlink("/tmp", process / "cwd")
+
+            self.assertIsNone(
+                terminal_process_launcher(7, "foot", proc_root=Path(directory))
+            )
+
     def test_exact_startup_class_is_resolved(self):
         with tempfile.TemporaryDirectory() as directory:
             applications = Path(directory) / "applications"

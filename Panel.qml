@@ -134,6 +134,7 @@ Panel {
     if (query !== "") values = values.filter(function(item) {
       var windows = (item.windows || []).map(function(window) {
         return String(window.class || "") + " " + String(window.title || "")
+          + " " + String(window.program || "")
       }).join(" ")
       return (String(item.name || "") + " " + String(item.layout || "") + " " + windows)
         .toLocaleLowerCase().indexOf(query) !== -1

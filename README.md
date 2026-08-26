@@ -18,10 +18,11 @@ This is a native Omarchy Quattro plugin: the bar widget and management panel run
 - Fullscreen/maximized, pseudotile, pinning, and static tags
 - Duplicate windows with the same class, tracked as independent slots
 - Omarchy shell panels discovered from their plugin manifests
+- Explicit terminal programs and their working directories, including Herdr and Omarchy's Docker View
 
 ## Limitations
 
-Application-owned state is outside the compositor's control and is not restored. That includes browser tabs, open documents, unsaved editor buffers, and terminal processes. Apps may restore some of that themselves through their own session support.
+Application-owned state is outside the compositor's control and is not restored. That includes browser tabs, open documents, unsaved editor buffers, and the internal state of terminal programs. When a supported terminal was launched with an explicit program, the plugin saves and reruns that outer terminal command; the program itself remains responsible for restoring its session.
 
 ## Requirements
 
@@ -77,6 +78,8 @@ If `XDG_CONFIG_HOME` is set, the data directory is `$XDG_CONFIG_HOME/omarchy-wor
 5. Otherwise, choose **Set up** and select a suggested desktop entry, enter a `.desktop` ID, or provide a custom argv JSON array such as `["foot"]`.
 
 A preset that needs launcher setup is saved as an explicit draft. It cannot be loaded until every window has a launch recipe. Installed Omarchy panel plugins are matched by their manifest name and relaunched through `omarchy-shell`; existing drafts are rechecked automatically when the service starts.
+
+Terminals launched with an explicit program are detected automatically. For example, Herdr is saved as its terminal invocation ending in `-e herdr`, while Docker View retains `-e omarchy-launch-docker-tui` so Omarchy's Docker-access wrapper still runs. Overwrite presets captured by an older plugin version to replace their generic terminal launchers with this richer recipe.
 
 ### Load
 
@@ -149,7 +152,7 @@ ${XDG_CONFIG_HOME:-~/.config}/omarchy-workspace-presets/presets.json
 
 Writes use an advisory lock, a same-directory temporary file, `fsync`, and atomic replacement. The data and lock files are mode `0600`.
 
-Desktop launchers store only the desktop entry ID, so application updates can change their underlying `Exec` line without making the preset stale. Custom launchers are stored as argv arrays and are never evaluated through a shell. Only configure a custom command you trust: it runs as your user when that preset loads.
+Desktop launchers store only the desktop entry ID, so application updates can change their underlying `Exec` line without making the preset stale. Custom launchers are stored as argv arrays and are never evaluated through a shell. Explicit terminal commands and their working directories are captured automatically; this can include command-line arguments, so avoid putting secrets directly in terminal command arguments. Only configure commands you trust: they run as your user when that preset loads.
 
 ## Troubleshooting
 

@@ -206,6 +206,7 @@ class PresetStore:
                     "id": slot.get("id", ""),
                     "class": slot.get("match", {}).get("class", ""),
                     "title": slot.get("match", {}).get("title", ""),
+                    "program": slot.get("match", {}).get("terminalProgram", ""),
                     "launcher": slot.get("launcher"),
                 }
                 for slot in windows
@@ -453,6 +454,14 @@ class PresetStore:
                 or not all(isinstance(value, str) and value for value in argv)
             ):
                 raise ValidationError("Custom launchers require a non-empty argv array")
+            cwd = launcher.get("cwd")
+            if cwd is not None and (
+                not isinstance(cwd, str)
+                or not cwd
+                or not Path(cwd).is_absolute()
+                or "\0" in cwd
+            ):
+                raise ValidationError("Custom launcher working directories must be absolute paths")
             return
         if kind == "omarchy-plugin":
             plugin_id = launcher.get("pluginId")

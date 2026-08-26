@@ -2,6 +2,12 @@
 
 All notable changes to Workspace Presets are documented here.
 
+## 1.4.0 - 2026-08-26
+
+- Capture explicit programs launched inside supported terminal emulators and replay the terminal's exact argv and working directory.
+- Restore Omarchy terminal TUIs such as Herdr and Docker View through their original launch wrappers instead of reopening an empty terminal.
+- Include captured terminal program names in preset search.
+
 ## 1.3.4 - 2026-08-25
 
 - Map the user-facing workspace key 0 to Hyprland workspace 10, matching Omarchy's default number-row bindings.

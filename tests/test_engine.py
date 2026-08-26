@@ -280,6 +280,20 @@ class EngineRestoreTests(unittest.TestCase):
             "quickshell.spotify", "{}",
         ])
 
+    def test_terminal_command_launcher_restores_working_directory(self):
+        with patch("workspace_presets.engine.subprocess.Popen") as popen:
+            WorkspaceEngine._launch({
+                "kind": "command",
+                "argv": ["foot", "-e", "herdr"],
+                "cwd": "/home/blake",
+            })
+
+        self.assertEqual(
+            popen.call_args.args[0],
+            ["uwsm-app", "--", "foot", "-e", "herdr"],
+        )
+        self.assertEqual(popen.call_args.kwargs["cwd"], "/home/blake")
+
     def test_existing_draft_gets_automatic_panel_launcher(self):
         with tempfile.TemporaryDirectory() as directory:
             store = PresetStore(Path(directory) / "presets.json")

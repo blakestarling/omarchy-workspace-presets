@@ -68,6 +68,23 @@ class PresetStoreTests(unittest.TestCase):
             {"kind": "omarchy-plugin", "pluginId": "quickshell.spotify"},
         )
         self.assertTrue(self.store.public_summary(updated)["loadable"])
+        updated = self.store.set_launcher(
+            saved["id"], "slot-1",
+            {
+                "kind": "command",
+                "argv": ["foot", "-e", "herdr"],
+                "cwd": "/home/blake",
+            },
+        )
+        self.assertEqual(
+            updated["snapshot"]["windows"][0]["launcher"]["cwd"],
+            "/home/blake",
+        )
+        with self.assertRaises(ValidationError):
+            self.store.set_launcher(
+                saved["id"], "slot-1",
+                {"kind": "command", "argv": ["foot"], "cwd": "relative/path"},
+            )
         with self.assertRaises(ValidationError):
             self.store.set_launcher(
                 saved["id"], "slot-1",

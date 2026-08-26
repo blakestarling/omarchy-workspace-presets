@@ -13,6 +13,14 @@ from pathlib import Path
 
 FIELD_CODE = re.compile(r"^%[fFuUdDnNickvm]$")
 SAFE_DESKTOP_ID = re.compile(r"^[A-Za-z0-9_.+-]+\.desktop$")
+TERMINAL_EXECUTABLES = {
+    "alacritty",
+    "foot",
+    "footclient",
+    "ghostty",
+    "kitty",
+    "wezterm-gui",
+}
 
 
 @dataclass(frozen=True)
@@ -146,6 +154,44 @@ def process_executable(pid: object) -> str:
         return Path(f"/proc/{int(pid)}/exe").resolve().name
     except (OSError, TypeError, ValueError):
         return ""
+
+
+def terminal_process_launcher(
+    pid: object,
+    executable: str,
+    *,
+    proc_root: Path = Path("/proc"),
+) -> tuple[dict, str] | None:
+    """Capture an explicit command passed to a known terminal emulator.
+
+    Omarchy's xdg-terminal-exec integration uses ``-e`` before the program.
+    Replaying the terminal's own argv preserves terminal-specific app IDs,
+    titles, and wrappers such as omarchy-launch-docker-tui.
+    """
+    if Path(executable).name.casefold() not in TERMINAL_EXECUTABLES:
+        return None
+    try:
+        process = proc_root / str(int(pid))
+        raw = (process / "cmdline").read_bytes()
+        if not raw or len(raw) > 65536:
+            return None
+        argv = [
+            part.decode("utf-8", errors="replace")
+            for part in raw.split(b"\0")
+            if part
+        ]
+        if not argv or len(argv) > 256:
+            return None
+        marker = argv.index("-e")
+        command = argv[marker + 1:]
+        if not command:
+            return None
+        cwd = str((process / "cwd").resolve(strict=True))
+    except (OSError, TypeError, ValueError):
+        return None
+    if not Path(cwd).is_absolute():
+        return None
+    return {"kind": "command", "argv": argv, "cwd": cwd}, Path(command[0]).name
 
 
 def _norm(value: object) -> str:

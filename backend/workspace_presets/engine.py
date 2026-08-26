@@ -20,6 +20,7 @@ from .desktop import (
     resolve_launcher,
     scan_desktop_entries,
     scan_omarchy_panel_plugins,
+    terminal_process_launcher,
 )
 from .errors import LaunchError, RestoreError, UnsupportedError, ValidationError
 from .hyprland import Hyprland, wait_for_new_window, window_match_score
@@ -126,7 +127,15 @@ class WorkspaceEngine:
                 "xwayland": bool(client.get("xwayland", False)),
             }
             resolution_input = {**client, "executable": executable}
-            launcher, candidates = resolve_launcher(resolution_input, entries, panel_plugins)
+            terminal_launch = terminal_process_launcher(client.get("pid"), executable)
+            if terminal_launch:
+                launcher, terminal_program = terminal_launch
+                match["terminalProgram"] = terminal_program
+                candidates = []
+            else:
+                launcher, candidates = resolve_launcher(
+                    resolution_input, entries, panel_plugins
+                )
             geometry = rect_for(client)
             self.progress(
                 "capture",
@@ -530,6 +539,9 @@ class WorkspaceEngine:
                     raise ValidationError(f"Custom command {executable!r} no longer exists")
             elif not shutil.which(executable):
                 raise ValidationError(f"Custom command {executable!r} is not on PATH")
+            cwd = launcher.get("cwd")
+            if cwd is not None and not Path(cwd).is_dir():
+                raise ValidationError(f"Command working directory {cwd!r} no longer exists")
         else:
             plugin_id = launcher["pluginId"]
             if not shutil.which("omarchy-shell"):
@@ -672,6 +684,7 @@ class WorkspaceEngine:
         try:
             subprocess.Popen(
                 command,
+                cwd=launcher.get("cwd"),
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
