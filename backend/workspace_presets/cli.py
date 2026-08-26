@@ -71,6 +71,11 @@ def parser() -> argparse.ArgumentParser:
     startup_choice.add_argument("--id")
     startup_choice.add_argument("--disable", action="store_true")
 
+    startup_confirmation = commands.add_parser("group-startup-confirmation")
+    confirmation_choice = startup_confirmation.add_mutually_exclusive_group(required=True)
+    confirmation_choice.add_argument("--enable", action="store_true")
+    confirmation_choice.add_argument("--disable", action="store_true")
+
     group_preflight = commands.add_parser("group-preflight")
     group_preflight.add_argument("--id", required=True)
 
@@ -165,7 +170,10 @@ def main(argv: list[str] | None = None) -> int:
             result = store.delete_group(args.id)
         elif args.command == "group-startup":
             store.set_startup_group(None if args.disable else args.id)
-            result = {"startupGroupId": store.startup_group_id()}
+            result = store.startup_settings()
+        elif args.command == "group-startup-confirmation":
+            store.set_startup_confirmation(args.enable)
+            result = store.startup_settings()
         elif args.command == "group-preflight":
             result = engine.preflight_group(args.id)
         elif args.command == "group-load":
@@ -187,9 +195,19 @@ def main(argv: list[str] | None = None) -> int:
                 result = {"launched": False, "reason": "already-attempted-this-session"}
             else:
                 os.close(descriptor)
-                group_id = store.startup_group_id()
+                settings = store.startup_settings()
+                group_id = settings["startupGroupId"]
                 if group_id is None:
                     result = {"launched": False, "reason": "no-startup-group"}
+                elif settings["confirmStartupLaunch"]:
+                    check = engine.preflight_group(group_id)
+                    check["startupConfirmation"] = True
+                    result = {
+                        "launched": False,
+                        "reason": "confirmation-required",
+                        "confirmationRequired": True,
+                        "preflight": check,
+                    }
                 else:
                     loaded = engine.load_group(group_id)
                     result = {"launched": True, "group": loaded}

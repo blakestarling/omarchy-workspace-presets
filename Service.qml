@@ -29,6 +29,7 @@ Item {
   property int loadStartedSerial: 0
 
   signal changed()
+  signal startupConfirmationRequested()
 
   function initialize() {
     if (initialized || backendPath === "") return
@@ -141,6 +142,14 @@ Item {
     enqueue(args, "group-startup", true)
   }
 
+  function setStartupConfirmation(enabled) {
+    enqueue(
+      ["group-startup-confirmation", enabled ? "--enable" : "--disable"],
+      "group-startup-confirmation",
+      true
+    )
+  }
+
   function preflightGroup(groupId) {
     pendingPreflight = null
     enqueue(["group-preflight", "--id", String(groupId)], "group-preflight")
@@ -152,8 +161,9 @@ Item {
   }
 
   function cancelPreflight() {
+    var wasStartup = pendingPreflight && pendingPreflight.startupConfirmation === true
     pendingPreflight = null
-    statusMessage = "Load cancelled"
+    statusMessage = wasStartup ? "Startup launch cancelled for this session" : "Load cancelled"
   }
 
   function enqueueConfirmedLoad(check, conflictPolicy) {
@@ -270,8 +280,13 @@ Item {
     } else {
       if (operation === "set-launcher") selectedDetails = null
       if (operation === "startup-group") {
-        if (event.data && event.data.launched) statusMessage = "Startup preset group loaded"
-        else statusMessage = "Ready"
+        if (event.data && event.data.confirmationRequired && event.data.preflight) {
+          pendingPreflight = event.data.preflight
+          statusMessage = "Confirm startup preset group"
+          startupConfirmationRequested()
+        } else if (event.data && event.data.launched) {
+          statusMessage = "Startup preset group loaded"
+        } else statusMessage = "Ready"
       } else if (operation === "group-load") statusMessage = "Preset group loaded"
       else statusMessage = operation === "load" ? "Preset loaded" : "Preset updated"
     }

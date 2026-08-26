@@ -580,8 +580,12 @@ Panel {
             anchors.margins: Style.space(10)
             spacing: Style.space(8)
             Text {
-              text: root.presetService && root.presetService.pendingPreflight && root.presetService.pendingPreflight.kind === "group"
-                ? "Replace these workspaces?" : "Replace this workspace?"
+              text: root.presetService && root.presetService.pendingPreflight
+                && root.presetService.pendingPreflight.startupConfirmation === true
+                ? "Launch ‘" + String(root.presetService.pendingPreflight.group.name || "startup group") + "’?"
+                : root.presetService && root.presetService.pendingPreflight
+                  && root.presetService.pendingPreflight.kind === "group"
+                  ? "Replace these workspaces?" : "Replace this workspace?"
               color: root.foreground
               font.family: root.fontFamily
               font.pixelSize: Style.font.subtitle
@@ -594,9 +598,20 @@ Panel {
                 if (!root.presetService || !root.presetService.pendingPreflight) return ""
                 var check = root.presetService.pendingPreflight
                 if (check.kind === "group") {
-                  return String(check.windowCountToClose || 0) + " window(s) across "
+                  if (check.startupConfirmation === true) {
+                    var startupMessage = "This startup group targets "
+                      + String((check.targets || []).length) + " workspace(s). "
+                    if (Number(check.windowCountToClose || 0) > 0)
+                      startupMessage += String(check.windowCountToClose) + " existing window(s) will receive normal close requests. "
+                    else startupMessage += "Its target workspaces are currently clear. "
+                    return startupMessage
+                      + "Every target was validated, and applications that refuse to close will never be force-killed. "
+                      + "Cancel or press Escape to skip this launch for the current session."
+                  }
+                  var groupMessage = String(check.windowCountToClose || 0) + " window(s) across "
                     + String((check.targets || []).length) + " workspace(s) will receive normal close requests. "
                     + "Every target was validated before this confirmation. Applications that refuse to close will never be force-killed."
+                  return groupMessage
                 }
                 var workspaceName = check.workspace ? String(check.workspace.name) : "current"
                 var message = (check.windowsToClose || []).length + " window(s) on workspace " + workspaceName + " will receive normal close requests."
@@ -617,7 +632,9 @@ Panel {
                 onClicked: root.presetService.cancelPreflight()
               }
               ActionButton {
-                label: "Launch new"
+                label: root.presetService && root.presetService.pendingPreflight
+                  && root.presetService.pendingPreflight.startupConfirmation === true
+                  ? "Launch group" : "Launch new"
                 foreground: root.foreground
                 fontFamily: root.fontFamily
                 destructive: true
@@ -1034,6 +1051,18 @@ Panel {
                   enabled: !!root.presetService
                   onClicked: root.confirmGroup = groupCard.modelData
                 }
+              }
+
+              Toggle {
+                width: parent.width
+                visible: groupCard.modelData.launchOnStartup
+                label: "Confirm before startup launch"
+                description: "At login, open this panel and ask before replacing the group's workspaces."
+                foreground: root.foreground
+                accent: Color.accent
+                fontFamily: root.fontFamily
+                checked: groupCard.modelData.confirmOnStartup === true
+                onClicked: root.presetService.setStartupConfirmation(!checked)
               }
 
               Text {
