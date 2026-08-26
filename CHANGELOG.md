@@ -2,6 +2,11 @@
 
 All notable changes to Workspace Presets are documented here.
 
+## 1.3.3 - 2026-08-25
+
+- Allow preset groups to focus and load workspace 0 through the Hyprland dispatcher.
+- Place the bar widget in the left section by default on new installations.
+
 ## 1.3.2 - 2026-08-25
 
 - Keep Escape-to-close working after a save refresh destroys and recreates the focused form delegate.

@@ -164,7 +164,7 @@ class Hyprland:
 
     def focus_workspace(self, workspace: str | int) -> None:
         value = str(workspace)
-        if not value.isdigit() or int(value) < 1:
+        if not value.isdigit():
             raise HyprlandError("Unsafe workspace number")
         self.lua_dispatch(f"hl.dsp.focus({{workspace={self.lua_string(value)}}})")
 

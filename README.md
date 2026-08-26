@@ -170,7 +170,7 @@ If the widget does not appear after enabling it:
 
 ```bash
 omarchy-shell shell rescanPlugins
-omarchy bar move blakestarling.workspace-presets --section right
+omarchy bar move blakestarling.workspace-presets --section left
 ```
 
 Common restore failures:

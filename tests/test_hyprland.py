@@ -1,6 +1,7 @@
 import unittest
 
 from workspace_presets.hyprland import Hyprland
+from workspace_presets.errors import HyprlandError
 
 
 class ContextHyprland(Hyprland):
@@ -41,6 +42,15 @@ class RecordingHyprland(Hyprland):
 
 
 class HyprlandLuaDispatcherTests(unittest.TestCase):
+    def test_workspace_zero_is_a_safe_focus_target(self):
+        hypr = RecordingHyprland()
+
+        hypr.focus_workspace(0)
+
+        self.assertIn('hl.dsp.focus({workspace="0"})', hypr.calls[0][0][2])
+        with self.assertRaises(HyprlandError):
+            hypr.focus_workspace(-1)
+
     def test_window_operations_use_typed_lua_dispatchers(self):
         hypr = RecordingHyprland()
         window = {"stableId": "42", "address": "0x123"}
