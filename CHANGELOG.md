@@ -2,6 +2,10 @@
 
 All notable changes to Workspace Presets are documented here.
 
+## 1.3.2 - 2026-08-25
+
+- Keep Escape-to-close working after a save refresh destroys and recreates the focused form delegate.
+
 ## 1.3.1 - 2026-08-25
 
 - Preserve in-progress workspace assignment edits when another preset or group mutation refreshes the panel.
