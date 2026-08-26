@@ -30,6 +30,21 @@ BarWidget {
   onBarChanged: injectPanel()
   onSettingsChanged: injectPanel()
 
+  function showStartupConfirmation() {
+    if (!root.presetService || !root.presetService.pendingPreflight
+        || root.presetService.pendingPreflight.startupConfirmation !== true) return
+    if (panelLoader.item) panelLoader.item.activeTab = "groups"
+    root.open()
+  }
+
+  Connections {
+    target: root.presetService
+    // The widget may be constructed one tick before the service registry has
+    // published this plugin's service object.
+    ignoreUnknownSignals: true
+    function onStartupConfirmationRequested() { root.showStartupConfirmation() }
+  }
+
   Loader {
     id: panelLoader
     active: true
@@ -38,6 +53,7 @@ BarWidget {
     onLoaded: {
       root.injectPanel()
       Qt.callLater(root.injectPanel)
+      Qt.callLater(root.showStartupConfirmation)
     }
   }
 

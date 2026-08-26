@@ -2,6 +2,12 @@
 
 All notable changes to Workspace Presets are documented here.
 
+## 1.7.0 - 2026-08-26
+
+- Add an optional confirmation toggle for the selected startup preset group.
+- Open the panel at login with a validated group summary and Launch/Cancel choice when confirmation is enabled.
+- Treat Cancel, Escape, or closing the panel as skipping the launch for the current session without prompting again after a shell reload.
+
 ## 1.6.6 - 2026-08-26
 
 - Keep buttons and fields visually stable during backend work, using an invisible interaction shield for foreground operations instead of fading every control.

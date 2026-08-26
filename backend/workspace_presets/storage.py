@@ -45,6 +45,7 @@ class PresetStore:
             "presets": [],
             "presetGroups": [],
             "startupGroupId": None,
+            "confirmStartupLaunch": False,
         }
 
     @contextmanager
@@ -122,6 +123,9 @@ class PresetStore:
         # installations remain readable and are upgraded on their next write.
         groups = data.setdefault("presetGroups", [])
         data.setdefault("startupGroupId", None)
+        confirm_startup = data.setdefault("confirmStartupLaunch", False)
+        if not isinstance(confirm_startup, bool):
+            raise ValidationError("confirmStartupLaunch must be true or false")
         if not isinstance(groups, list):
             raise ValidationError("Preset data has an invalid presetGroups array")
         preset_ids = seen_ids
@@ -226,10 +230,23 @@ class PresetStore:
         groups = sorted(
             data["presetGroups"], key=lambda item: item.get("updatedAt", ""), reverse=True
         )
-        return [self.public_group_summary(item, presets, data.get("startupGroupId")) for item in groups]
+        return [
+            self.public_group_summary(
+                item,
+                presets,
+                data.get("startupGroupId"),
+                data.get("confirmStartupLaunch", False),
+            )
+            for item in groups
+        ]
 
     @staticmethod
-    def public_group_summary(group: dict, presets: dict[str, dict], startup_group_id: str | None) -> dict:
+    def public_group_summary(
+        group: dict,
+        presets: dict[str, dict],
+        startup_group_id: str | None,
+        confirm_startup_launch: bool = False,
+    ) -> dict:
         assignments = []
         for item in sorted(group.get("assignments", []), key=lambda value: value["workspace"]):
             preset = presets.get(item["presetId"])
@@ -250,6 +267,9 @@ class PresetStore:
             "assignmentCount": len(assignments),
             "loadable": bool(assignments) and all(item["loadable"] for item in assignments),
             "launchOnStartup": group["id"] == startup_group_id,
+            "confirmOnStartup": (
+                group["id"] == startup_group_id and confirm_startup_launch
+            ),
         }
 
     def get_group(self, group_id: str) -> dict:
@@ -261,6 +281,13 @@ class PresetStore:
 
     def startup_group_id(self) -> str | None:
         return self.load().get("startupGroupId")
+
+    def startup_settings(self) -> dict:
+        data = self.load()
+        return {
+            "startupGroupId": data.get("startupGroupId"),
+            "confirmStartupLaunch": data.get("confirmStartupLaunch", False),
+        }
 
     def save_group(self, name: str, assignments: list[dict], *, group_id: str | None = None) -> dict:
         normalized = self.normalize_name(name)
@@ -298,6 +325,7 @@ class PresetStore:
             data["presetGroups"] = [g for g in data["presetGroups"] if g["id"] != group_id]
             if data.get("startupGroupId") == group_id:
                 data["startupGroupId"] = None
+                data["confirmStartupLaunch"] = False
             self._write_unlocked(data)
             return copy.deepcopy(target)
 
@@ -313,8 +341,23 @@ class PresetStore:
                 if not summary["loadable"]:
                     raise ValidationError("Only a complete, loadable preset group can launch on startup")
             data["startupGroupId"] = group_id
+            if group_id is None:
+                data["confirmStartupLaunch"] = False
             self._write_unlocked(data)
             return copy.deepcopy(target)
+
+    def set_startup_confirmation(self, enabled: bool) -> bool:
+        if not isinstance(enabled, bool):
+            raise ValidationError("Startup confirmation must be true or false")
+        with self._locked(exclusive=True):
+            data = self._read_unlocked()
+            if enabled and data.get("startupGroupId") is None:
+                raise ValidationError(
+                    "Select a preset group for startup before enabling confirmation"
+                )
+            data["confirmStartupLaunch"] = enabled
+            self._write_unlocked(data)
+            return enabled
 
     def get(self, preset_id: str) -> dict:
         data = self.load()

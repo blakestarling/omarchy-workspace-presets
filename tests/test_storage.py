@@ -35,6 +35,7 @@ class PresetStoreTests(unittest.TestCase):
         self.assertEqual(parsed["schemaVersion"], 1)
         self.assertEqual(parsed["presetGroups"], [])
         self.assertIsNone(parsed["startupGroupId"])
+        self.assertFalse(parsed["confirmStartupLaunch"])
         self.assertEqual(parsed["presets"][0]["useCount"], 0)
         self.assertEqual(parsed["presets"][0]["lastUsedAt"], "")
 
@@ -100,14 +101,22 @@ class PresetStoreTests(unittest.TestCase):
             "Workday", [{"presetId": preset["id"], "workspace": 2}]
         )
         self.store.set_startup_group(group["id"])
+        self.store.set_startup_confirmation(True)
         summary = self.store.list_group_summaries()[0]
         self.assertTrue(summary["loadable"])
         self.assertTrue(summary["launchOnStartup"])
+        self.assertTrue(summary["confirmOnStartup"])
+        self.assertTrue(self.store.startup_settings()["confirmStartupLaunch"])
         self.assertEqual(summary["assignments"][0]["presetName"], "Ready")
         with self.assertRaisesRegex(ValidationError, "used by group"):
             self.store.delete(preset["id"])
         self.store.delete_group(group["id"])
         self.assertIsNone(self.store.startup_group_id())
+        self.assertFalse(self.store.startup_settings()["confirmStartupLaunch"])
+
+    def test_startup_confirmation_requires_a_selected_group(self):
+        with self.assertRaisesRegex(ValidationError, "Select a preset group"):
+            self.store.set_startup_confirmation(True)
 
     def test_group_rejects_duplicate_workspace_and_incomplete_startup(self):
         one = self.store.save_snapshot("One", self.snapshot)

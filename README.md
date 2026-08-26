@@ -141,6 +141,8 @@ Groups can be renamed, reassigned, and deleted without deleting their presets. A
 
 Choose **Launch on startup** on a complete group. Only one group can hold this setting, so enabling another transfers it. The plugin runs the selected group once when its service first starts in a new Hyprland session. A session-scoped guard prevents an `omarchy-shell` reload or plugin rescan from launching the group again. Enabling the setting does not immediately launch the group; it takes effect on the next Hyprland session.
 
+Enable **Confirm before startup launch** on the selected startup group if you do not want it to launch unconditionally. At the next login, the plugin opens its panel with a preflight summary and waits for **Launch group**. Choosing **Cancel**, pressing **Escape**, or closing the panel skips the group for that session; shell reloads will not prompt again until the next login.
+
 Startup restore is intentionally equivalent to a confirmed group launch: assigned workspaces are replaced with normal close requests and applications are never force-killed. If a launcher or preset becomes invalid, startup restore reports the error rather than partially skipping it.
 
 ## Optional shell IPC
@@ -167,7 +169,7 @@ omarchy-shell blakestarling.workspace-presets loadGroup GROUP_UUID
 
 ## Data and security
 
-Presets, preset groups, assignments, and the startup selection are stored as schema-versioned JSON at:
+Presets, preset groups, assignments, the startup selection, and its confirmation preference are stored as schema-versioned JSON at:
 
 ```text
 ${XDG_CONFIG_HOME:-~/.config}/omarchy-workspace-presets/presets.json
