@@ -1,5 +1,6 @@
 import os
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -231,6 +232,101 @@ class DesktopEntryTests(unittest.TestCase):
             {"class": "org.quickshell", "title": "Shared"}, {}, panels
         )
         self.assertIsNone(launcher)
+
+
+class ScannedFileTests(unittest.TestCase):
+    """Both scanned trees include a user-writable directory, so a name that
+    matched the glob is not necessarily a file the service can safely read."""
+
+    def _scan(self, directory: Path) -> tuple[dict, dict]:
+        """Run both scans on a worker so a blocking read fails instead of hanging."""
+        outcome: list[dict] = []
+
+        def scan() -> None:
+            with patch(
+                "workspace_presets.desktop._data_dirs", return_value=[directory]
+            ):
+                outcome.append(scan_desktop_entries())
+            outcome.append(scan_omarchy_panel_plugins([directory / "plugins"]))
+
+        worker = threading.Thread(target=scan, daemon=True)
+        worker.start()
+        worker.join(timeout=10)
+        self.assertFalse(worker.is_alive(), "a scanned file blocked the caller")
+        self.assertEqual(len(outcome), 2)
+        return outcome[0], outcome[1]
+
+    @staticmethod
+    def _populate(directory: Path) -> None:
+        applications = directory / "applications"
+        applications.mkdir()
+        (applications / "editor.desktop").write_text(
+            "[Desktop Entry]\nType=Application\nName=Editor\nExec=editor %F\n"
+        )
+        plugin = directory / "plugins" / "panel"
+        plugin.mkdir(parents=True)
+        (plugin / "manifest.json").write_text(
+            '{"id":"panel","name":"Panel","kinds":["panel"]}'
+        )
+
+    def test_a_planted_fifo_is_skipped_instead_of_blocking_a_scan(self):
+        # Nothing opens the write end, so a read without O_NONBLOCK would wait
+        # here for as long as the service ran, on a file the user never
+        # installed and neither scan needs.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._populate(root)
+            os.mkfifo(root / "applications" / "trap.desktop")
+            trap = root / "plugins" / "trap"
+            trap.mkdir()
+            os.mkfifo(trap / "manifest.json")
+
+            entries, panels = self._scan(root)
+
+            # The legitimate neighbours are still found: one unreadable file
+            # must not hide the rest of the directory.
+            self.assertEqual(set(entries), {"editor.desktop"})
+            self.assertEqual(set(panels), {"panel"})
+
+    def test_an_oversized_manifest_or_entry_is_skipped(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._populate(root)
+            bloated = root / "plugins" / "bloated"
+            bloated.mkdir()
+            (bloated / "manifest.json").write_text(
+                '{"id":"bloated","name":"Bloated","kinds":["panel"],"pad":"'
+                + "x" * 4096 + '"}'
+            )
+            (root / "applications" / "bloated.desktop").write_text(
+                "[Desktop Entry]\nType=Application\nName=Bloated\nExec=bloated\n"
+                + "#" * 4096
+            )
+            with patch("workspace_presets.desktop.MAX_SCANNED_FILE_BYTES", 1024):
+                entries, panels = self._scan(root)
+
+            self.assertEqual(set(entries), {"editor.desktop"})
+            self.assertEqual(set(panels), {"panel"})
+
+    def test_a_symlinked_entry_is_still_read(self):
+        # Packaged and dotfile-managed entries are routinely links, so the
+        # scans follow them on purpose and refusing one would hide a real
+        # application.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._populate(root)
+            packaged = root / "packaged"
+            packaged.mkdir()
+            (packaged / "viewer.desktop").write_text(
+                "[Desktop Entry]\nType=Application\nName=Viewer\nExec=viewer\n"
+            )
+            (root / "applications" / "viewer.desktop").symlink_to(
+                packaged / "viewer.desktop"
+            )
+
+            entries, _ = self._scan(root)
+
+            self.assertEqual(entries["viewer.desktop"].name, "Viewer")
 
 
 if __name__ == "__main__":

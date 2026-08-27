@@ -7,6 +7,7 @@ import fcntl
 import json
 import os
 import re
+import stat
 import tempfile
 import uuid
 from contextlib import contextmanager
@@ -23,6 +24,12 @@ PLUGIN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 # line, so a legitimately captured launcher can never fail validation.
 MAX_ARGV_ARGUMENTS = 256
 MAX_ARGV_CHARACTERS = 65536
+# A store the UI can produce stays in the low kilobytes, and even a pathological
+# one -- a hundred presets each holding twenty windows with a maximum-length
+# launcher -- would have to grow more than an order of magnitude to reach this.
+# The ceiling exists so a planted file cannot make the service read until it
+# runs out of memory, not to constrain anything a user can legitimately save.
+MAX_STATE_BYTES = 8 * 1024 * 1024
 
 
 def utc_now() -> str:
@@ -90,27 +97,102 @@ class PresetStore:
         finally:
             os.close(descriptor)
 
+    def _open_state(self) -> int | None:
+        """Open the state file for reading, or return None when it is absent.
+
+        The data directory is user-writable, so presets.json is whatever was
+        last left at that pathname -- anything running as the user can swap it
+        between one read and the next. O_NOFOLLOW refuses a symlink planted in
+        its place rather than reading through to the target, and O_NONBLOCK
+        keeps a FIFO or a device node from parking the long-lived service
+        inside open() with no writer on the other end.
+        """
+        try:
+            return os.open(
+                self.path,
+                os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+            )
+        except FileNotFoundError:
+            return None
+        except OSError as exc:
+            # A planted symlink arrives here as ELOOP. A FIFO or device opens
+            # successfully under O_NONBLOCK instead of failing, which is the
+            # point -- the refusal is the regular-file check below, reached
+            # rather than waited for.
+            raise ValidationError(f"Cannot read preset data: {exc}") from exc
+
+    def _state_identity(self, descriptor: int) -> tuple:
+        """Return the cache key for an opened state file, rejecting what cannot be one.
+
+        The check runs against the descriptor, not the pathname, so what is
+        verified here is exactly what the read below returns. Reading a
+        character device or a directory would misbehave in ways json never
+        sees, so only a regular file gets that far.
+        """
+        status = os.fstat(descriptor)
+        if not stat.S_ISREG(status.st_mode):
+            raise ValidationError(f"Preset data {self.path} is not a regular file")
+        if status.st_size > MAX_STATE_BYTES:
+            raise ValidationError(
+                f"Preset data {self.path} exceeds the {MAX_STATE_BYTES} byte limit"
+            )
+        return (status.st_ino, status.st_size, status.st_mtime_ns)
+
+    def _state_text(self, descriptor: int) -> str:
+        """Read an opened state file, stopping one byte past the ceiling.
+
+        The size fstat reported is a hint, not a promise: another process can
+        still be appending to the inode this descriptor holds. So the ceiling
+        is enforced against what is actually read, and the extra byte is what
+        distinguishes a file that just fits from one that does not.
+        """
+        chunks: list[bytes] = []
+        remaining = MAX_STATE_BYTES + 1
+        try:
+            while remaining > 0:
+                chunk = os.read(descriptor, min(remaining, 1 << 16))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+        except OSError as exc:
+            raise ValidationError(f"Cannot read preset data: {exc}") from exc
+        raw = b"".join(chunks)
+        if len(raw) > MAX_STATE_BYTES:
+            raise ValidationError(
+                f"Preset data {self.path} exceeds the {MAX_STATE_BYTES} byte limit"
+            )
+        try:
+            return raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ValidationError(f"Cannot read preset data: {exc}") from exc
+
     def _shared_unlocked(self) -> dict:
         """Return the validated document, reusing the parse while the file is unchanged.
 
         The caller must not mutate the result. Re-reading, re-parsing and
         re-validating the whole store for each of the several reads a single
         command makes was most of what loading a preset group spent on disk;
-        a stat is free by comparison and still notices another process's write.
+        an fstat is free by comparison and still notices another process's write.
+
+        The pathname is resolved once per call and everything after that goes
+        through the descriptor, so the identity that decides the cache hit
+        describes the same bytes the read returns.
         """
-        try:
-            status = self.path.stat()
-        except FileNotFoundError:
+        descriptor = self._open_state()
+        if descriptor is None:
             self._cache_key, self._cached = None, None
             return self.empty()
-        except OSError as exc:
-            raise ValidationError(f"Cannot read preset data: {exc}") from exc
-        key = (status.st_ino, status.st_size, status.st_mtime_ns)
-        if self._cached is not None and self._cache_key == key:
-            return self._cached
         try:
-            data = json.loads(self.path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
+            key = self._state_identity(descriptor)
+            if self._cached is not None and self._cache_key == key:
+                return self._cached
+            text = self._state_text(descriptor)
+        finally:
+            os.close(descriptor)
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError as exc:
             raise ValidationError(f"Cannot read preset data: {exc}") from exc
         # _validate_root also upgrades older documents in place, so cache what
         # it returns rather than what was parsed.

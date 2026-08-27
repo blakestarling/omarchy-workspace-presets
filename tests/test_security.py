@@ -12,10 +12,12 @@ import shlex
 import shutil
 import subprocess
 import tempfile
+import threading
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from workspace_presets import SUPPORTED_LAYOUTS
+from workspace_presets import SUPPORTED_LAYOUTS, storage
 from workspace_presets.engine import WorkspaceEngine, safe_label
 from workspace_presets.errors import HyprlandError, ValidationError
 from workspace_presets.hyprland import Hyprland
@@ -173,6 +175,55 @@ class PresetFileTests(unittest.TestCase):
         store.load()
         self.assertEqual(oct(os.stat(store.lock_path).st_mode & 0o777), "0o600")
         self.assertEqual(oct(os.stat(store.path.parent).st_mode & 0o777), "0o700")
+
+    def test_the_state_file_never_follows_a_planted_symlink(self):
+        # The link points at a document that would validate, so a read that
+        # followed it would succeed silently instead of failing loudly.
+        victim = self.root / "victim.json"
+        victim.write_text(json.dumps(PresetStore.empty()))
+        data = self.root / "cfg"
+        data.mkdir()
+        (data / "presets.json").symlink_to(victim)
+
+        with self.assertRaises(ValidationError):
+            PresetStore(data / "presets.json").load()
+
+    def test_a_planted_fifo_is_refused_instead_of_blocking_the_reader(self):
+        # Nothing ever opens the write end, so an open() without O_NONBLOCK
+        # would wait here for as long as the service kept running.
+        path = self.root / "presets.json"
+        os.mkfifo(path)
+        outcome: list[BaseException | None] = []
+
+        def read() -> None:
+            try:
+                PresetStore(path).load()
+                outcome.append(None)
+            except BaseException as exc:  # noqa: BLE001 - handed to the assertion
+                outcome.append(exc)
+
+        reader = threading.Thread(target=read, daemon=True)
+        reader.start()
+        reader.join(timeout=10)
+        self.assertFalse(reader.is_alive(), "reading a FIFO blocked the caller")
+        self.assertIsInstance(outcome[0], ValidationError)
+
+    def test_a_directory_left_at_the_state_path_is_refused(self):
+        path = self.root / "presets.json"
+        path.mkdir()
+        with self.assertRaises(ValidationError):
+            PresetStore(path).load()
+
+    def test_an_oversized_state_file_is_refused_before_it_is_parsed(self):
+        path = self.root / "presets.json"
+        with mock.patch.object(storage, "MAX_STATE_BYTES", 4096):
+            path.write_text(json.dumps(PresetStore.empty()) + " " * 4096)
+            with self.assertRaises(ValidationError):
+                PresetStore(path).load()
+            # What fits still loads, so the ceiling only rejects a file no
+            # legitimate store would have produced.
+            path.write_text(json.dumps(PresetStore.empty()))
+            self.assertEqual(PresetStore(path).load()["presets"], [])
 
     def test_one_damaged_preset_does_not_hide_the_rest_on_read(self):
         path = self.root / "presets.json"

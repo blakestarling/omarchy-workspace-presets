@@ -6,6 +6,7 @@ import json
 import os
 import re
 import shlex
+import stat
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
@@ -28,6 +29,11 @@ SHELL_EXECUTABLES = {
 SESSION_EXECUTABLES = {
     "mosh-client", "ssh", "tmux", "zellij",
 }
+# Both scanned trees include a user-writable directory, and the scans run inside
+# the long-lived service. A desktop entry carrying every translation upstream
+# ships stays comfortably under this, so the ceiling only rejects a file nothing
+# installs.
+MAX_SCANNED_FILE_BYTES = 256 * 1024
 
 
 class DesktopEntry:
@@ -107,6 +113,52 @@ class OmarchyPanelPlugin:
         )
 
 
+def _read_scanned_file(path: Path) -> str | None:
+    """Return the text of a file a scan turned up, or None if it is unusable.
+
+    Both callers scan a directory the user can write to, so a name that matched
+    is not necessarily a file: a FIFO left in one of these trees would park the
+    service inside open() until something opened the far end, and nothing bounds
+    how much an oversized one would read. O_NONBLOCK means such a path opens
+    rather than blocks, and the fstat below is what refuses it.
+
+    Symlinks are deliberately still followed. Packaged and dotfile-managed
+    desktop entries are routinely links, so refusing them would hide real
+    applications, and a link to something that is not a regular file fails the
+    same check as the real thing. Every failure here is a skip rather than an
+    error: one unreadable entry must not hide the rest of the directory.
+    """
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC)
+    except OSError:
+        return None
+    chunks: list[bytes] = []
+    try:
+        status = os.fstat(descriptor)
+        if not stat.S_ISREG(status.st_mode) or status.st_size > MAX_SCANNED_FILE_BYTES:
+            return None
+        # One byte past the ceiling, because the size above is only what the
+        # file measured before the read and it can still be growing.
+        remaining = MAX_SCANNED_FILE_BYTES + 1
+        while remaining > 0:
+            chunk = os.read(descriptor, min(remaining, 1 << 16))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+    except OSError:
+        return None
+    finally:
+        os.close(descriptor)
+    raw = b"".join(chunks)
+    if len(raw) > MAX_SCANNED_FILE_BYTES:
+        return None
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
 def _omarchy_plugin_roots() -> list[Path]:
     config_home = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
     return [config_home / "omarchy/plugins", Path("/usr/share/omarchy/shell/plugins")]
@@ -120,9 +172,12 @@ def scan_omarchy_panel_plugins(roots: list[Path] | None = None) -> dict[str, Oma
         if not root.is_dir():
             continue
         for path in sorted(root.rglob("manifest.json")):
+            text = _read_scanned_file(path)
+            if text is None:
+                continue
             try:
-                manifest = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
+                manifest = json.loads(text)
+            except json.JSONDecodeError:
                 continue
             plugin_id = manifest.get("id")
             name = manifest.get("name")
@@ -188,28 +243,30 @@ def _read_desktop_group(path: Path) -> dict[str, str] | None:
     here, so ConfigParser's full INI machinery was both the slowest step in a
     capture or preflight and, by a wide margin, the largest allocator.
     """
-    try:
-        with open(path, encoding="utf-8") as stream:
-            values: dict[str, str] = {}
-            inside = False
-            for line in stream:
-                line = line.strip()
-                # Comment markers are only comments at the start of a line.
-                if not line or line[0] in "#;":
-                    continue
-                if line[0] == "[":
-                    if inside:
-                        break
-                    inside = line == "[Desktop Entry]"
-                    continue
-                if not inside:
-                    continue
-                key, separator, value = line.partition("=")
-                if separator:
-                    values[key.strip()] = value.strip()
-            return values if inside or values else None
-    except (OSError, UnicodeDecodeError):
+    text = _read_scanned_file(path)
+    if text is None:
         return None
+    values: dict[str, str] = {}
+    inside = False
+    # Splitting on newlines alone rather than str.splitlines keeps a stray form
+    # feed or line separator inside a value from being read as a key of its own.
+    # Every line is stripped, so a CRLF entry parses exactly as an LF one does.
+    for line in text.split("\n"):
+        line = line.strip()
+        # Comment markers are only comments at the start of a line.
+        if not line or line[0] in "#;":
+            continue
+        if line[0] == "[":
+            if inside:
+                break
+            inside = line == "[Desktop Entry]"
+            continue
+        if not inside:
+            continue
+        key, separator, value = line.partition("=")
+        if separator:
+            values[key.strip()] = value.strip()
+    return values if inside or values else None
 
 
 def scan_desktop_entries() -> dict[str, DesktopEntry]:
