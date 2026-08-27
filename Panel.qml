@@ -109,23 +109,28 @@ Panel {
     onTriggered: if (root.foregroundBusy) root.progressVisible = true
   }
 
-  function workspaceFor(group, presetId) {
-    var assignments = group && Array.isArray(group.assignments) ? group.assignments : []
-    for (var index = 0; index < assignments.length; index++)
-      if (assignments[index].presetId === presetId) return Number(assignments[index].workspace)
-    return -1
-  }
+  // The assignment editor draws a row per preset inside a card per group, so
+  // a linear search per row made the lookup quadratic in the number of groups.
+  // One pass over the groups answers every row.
+  readonly property var assignmentIndex: buildAssignmentIndex()
 
-  function currentGroup(groupId) {
+  function buildAssignmentIndex() {
+    var index = ({})
     var groups = presetService && Array.isArray(presetService.presetGroups)
       ? presetService.presetGroups : []
-    for (var index = 0; index < groups.length; index++)
-      if (groups[index].id === groupId) return groups[index]
-    return null
+    for (var g = 0; g < groups.length; g++) {
+      var assignments = Array.isArray(groups[g].assignments) ? groups[g].assignments : []
+      for (var a = 0; a < assignments.length; a++)
+        index[assignmentDraftKey(groups[g].id, assignments[a].presetId)] =
+          Number(assignments[a].workspace)
+    }
+    return index
   }
 
   function workspaceForCurrentGroup(groupId, presetId) {
-    return workspaceFor(currentGroup(groupId), presetId)
+    var key = assignmentDraftKey(groupId, presetId)
+    return Object.prototype.hasOwnProperty.call(assignmentIndex, key)
+      ? assignmentIndex[key] : -1
   }
 
   function assignmentDraftKey(groupId, presetId) {

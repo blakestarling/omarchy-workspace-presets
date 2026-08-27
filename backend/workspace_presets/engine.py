@@ -923,37 +923,54 @@ class WorkspaceEngine:
                 f"Opening {', '.join(labels)}",
                 {"wave": wave_index, "waves": len(waves), "current": len(launched), "total": total},
             )
-            for task in wave:
-                self._launch_on_workspace(
-                    task["slot"]["launcher"], task["workspaceId"]
-                )
+            # Subscribed before anything is launched so a window that maps
+            # immediately cannot be missed.
+            events = self.hypr.events({"openwindow"})
+            try:
+                for task in wave:
+                    self._launch_on_workspace(
+                        task["slot"]["launcher"], task["workspaceId"]
+                    )
 
-            unresolved = {task["key"]: task for task in wave}
-            assigned_ids: set[str] = set()
-            deadline = time.monotonic() + launch_timeout
-            while unresolved and time.monotonic() < deadline:
-                candidates = []
-                for candidate in self.hypr.clients():
-                    stable_id = str(candidate.get("stableId", candidate.get("address", "")))
-                    if stable_id in before or stable_id in assigned_ids:
-                        continue
-                    for key, task in unresolved.items():
-                        score = window_match_score(candidate, task["slot"]["match"])
-                        if score >= 100:
-                            candidates.append((score, stable_id, key, candidate))
-                for _score, stable_id, key, candidate in sorted(
-                    candidates, key=lambda item: (item[0], item[1], item[2]), reverse=True
-                ):
-                    if key not in unresolved or stable_id in assigned_ids:
-                        continue
-                    task = unresolved.pop(key)
-                    assigned_ids.add(stable_id)
-                    self.hypr.move_to_workspace(candidate, task["workspaceId"])
-                    self.hypr.set_floating(candidate, True)
-                    windows[key] = self.hypr.find_window(stable_id) or candidate
-                    launched.append(key)
-                if unresolved:
-                    time.sleep(0.12)
+                unresolved = {task["key"]: task for task in wave}
+                assigned_ids: set[str] = set()
+                deadline = time.monotonic() + launch_timeout
+                while unresolved and time.monotonic() < deadline:
+                    candidates = []
+                    for candidate in self.hypr.clients():
+                        stable_id = str(candidate.get("stableId", candidate.get("address", "")))
+                        if stable_id in before or stable_id in assigned_ids:
+                            continue
+                        for key, task in unresolved.items():
+                            score = window_match_score(candidate, task["slot"]["match"])
+                            if score >= 100:
+                                candidates.append((score, stable_id, key, candidate))
+                    for _score, stable_id, key, candidate in sorted(
+                        candidates, key=lambda item: (item[0], item[1], item[2]), reverse=True
+                    ):
+                        if key not in unresolved or stable_id in assigned_ids:
+                            continue
+                        task = unresolved.pop(key)
+                        assigned_ids.add(stable_id)
+                        self.hypr.move_to_workspace(candidate, task["workspaceId"])
+                        self.hypr.set_floating(candidate, True)
+                        windows[key] = self.hypr.find_window(stable_id) or candidate
+                        launched.append(key)
+                    if not unresolved:
+                        break
+                    # An application maps roughly 65 ms after launching, where
+                    # this loop used to wait out a fixed 120 ms before looking.
+                    # The cap keeps a missed event no worse than that.
+                    left = min(0.12, deadline - time.monotonic())
+                    if left <= 0:
+                        break
+                    if events is None:
+                        time.sleep(left)
+                    else:
+                        events.wait(left)
+            finally:
+                if events is not None:
+                    events.close()
 
             if unresolved:
                 task = next(iter(unresolved.values()))

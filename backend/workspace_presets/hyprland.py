@@ -6,6 +6,7 @@ import json
 import math
 import os
 import re
+import select
 import shlex
 import socket
 import time
@@ -27,10 +28,93 @@ TAG = re.compile(r"^[A-Za-z0-9_-]+$")
 ERROR_PREFIX = "error:"
 
 
+class EventStream:
+    """A subscription to Hyprland's event socket, used to stop guessing.
+
+    Every wait in a restore used to sleep a fixed interval and re-ask what the
+    windows were doing, which both burned queries and added up to half that
+    interval of latency per window. Hyprland announces these exact transitions
+    on ``.socket2.sock``: an ``openwindow`` arrives about 65 ms after a launch,
+    where the old loop would not have looked again for another 120 ms.
+
+    The events are only a wake-up. They carry addresses, not the stable IDs the
+    matching works in, so the caller still re-reads the client list - it just
+    does so when something has actually changed. Waiting is capped at the
+    interval the loop used to sleep, so a missed or unparsed event degrades to
+    exactly the old polling behaviour rather than hanging.
+    """
+
+    def __init__(self, path: str, kinds: set[str]):
+        self._kinds = kinds
+        self._buffer = b""
+        self._socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            self._socket.connect(path)
+            self._socket.setblocking(False)
+        except OSError:
+            self._socket.close()
+            raise
+
+    def __enter__(self) -> "EventStream":
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.close()
+
+    def close(self) -> None:
+        try:
+            self._socket.close()
+        except OSError:
+            pass
+
+    def wait(self, timeout: float) -> bool:
+        """Block until a subscribed event arrives or ``timeout`` elapses."""
+        deadline = time.monotonic() + timeout
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            try:
+                ready, _, _ = select.select([self._socket], [], [], remaining)
+            except (OSError, ValueError):
+                return False
+            if not ready:
+                return False
+            try:
+                block = self._socket.recv(65536)
+            except BlockingIOError:
+                continue
+            except OSError:
+                return False
+            if not block:
+                return False
+            self._buffer += block
+            matched = False
+            while b"\n" in self._buffer:
+                line, self._buffer = self._buffer.split(b"\n", 1)
+                kind = line.split(b">>", 1)[0].decode("utf-8", errors="replace")
+                if kind in self._kinds:
+                    matched = True
+            if matched:
+                return True
+
+
 class Hyprland:
     def __init__(self, *, timeout: float = 8.0):
         self.timeout = timeout
         self._socket_path: str | None = None
+
+    def events(self, kinds: set[str]) -> EventStream | None:
+        """Subscribe to window lifecycle events, or None if unavailable.
+
+        Callers must subscribe before the action they are waiting on, so a
+        transition cannot slip between the two.
+        """
+        try:
+            path = self.socket_path().replace(".socket.sock", ".socket2.sock")
+            return EventStream(path, kinds)
+        except (OSError, UnsupportedError):
+            return None
 
     def socket_path(self) -> str:
         """Return this session's Hyprland IPC socket, or raise if there is none.
@@ -283,20 +367,33 @@ class Hyprland:
         active column or node even though the focus dispatcher succeeded.
         """
         selector = self.selector(window)
-        self.focus(window)
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            active = self.active_window()
-            if active is not None:
-                if selector.startswith("stableid:") and str(
-                    active.get("stableId", "")
-                ) == selector.removeprefix("stableid:"):
-                    return
-                if selector.startswith("address:") and str(
-                    active.get("address", "")
-                ) == selector.removeprefix("address:"):
-                    return
-            time.sleep(0.005)
+        # Subscribed before the dispatch so the announcement cannot arrive in
+        # the gap between focusing and starting to watch.
+        stream = self.events({"activewindowv2", "activewindow"})
+        try:
+            self.focus(window)
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                active = self.active_window()
+                if active is not None:
+                    if selector.startswith("stableid:") and str(
+                        active.get("stableId", "")
+                    ) == selector.removeprefix("stableid:"):
+                        return
+                    if selector.startswith("address:") and str(
+                        active.get("address", "")
+                    ) == selector.removeprefix("address:"):
+                        return
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                if stream is None:
+                    time.sleep(min(0.005, remaining))
+                elif not stream.wait(min(0.005, remaining)):
+                    continue
+        finally:
+            if stream is not None:
+                stream.close()
         raise HyprlandError(
             f"Could not focus {selector} before applying its saved layout"
         )
@@ -643,11 +740,25 @@ class Hyprland:
     def wait_until_closed(self, stable_ids: set[str], timeout: float) -> set[str]:
         deadline = time.monotonic() + timeout
         remaining = set(stable_ids)
-        while remaining and time.monotonic() < deadline:
-            present = {str(item.get("stableId")) for item in self.clients()}
-            remaining &= present
-            if remaining:
-                time.sleep(0.15)
+        stream = self.events({"closewindow"})
+        try:
+            while remaining and time.monotonic() < deadline:
+                present = {str(item.get("stableId")) for item in self.clients()}
+                remaining &= present
+                if not remaining:
+                    break
+                # Capped at the interval this loop used to sleep, so a missed
+                # event is no worse than the old poll.
+                left = min(0.15, deadline - time.monotonic())
+                if left <= 0:
+                    break
+                if stream is None:
+                    time.sleep(left)
+                else:
+                    stream.wait(left)
+        finally:
+            if stream is not None:
+                stream.close()
         return remaining
 
 
@@ -677,15 +788,26 @@ def wait_for_new_window(
 ) -> dict | None:
     deadline = time.monotonic() + timeout
     best: tuple[int, dict] | None = None
-    while time.monotonic() < deadline:
-        for candidate in hypr.clients():
-            stable = str(candidate.get("stableId", candidate.get("address", "")))
-            if stable in before:
-                continue
-            score = window_match_score(candidate, match)
-            if score >= 100 and (best is None or score > best[0]):
-                best = (score, candidate)
-        if best:
-            return best[1]
-        time.sleep(0.12)
+    stream = hypr.events({"openwindow"})
+    try:
+        while time.monotonic() < deadline:
+            for candidate in hypr.clients():
+                stable = str(candidate.get("stableId", candidate.get("address", "")))
+                if stable in before:
+                    continue
+                score = window_match_score(candidate, match)
+                if score >= 100 and (best is None or score > best[0]):
+                    best = (score, candidate)
+            if best:
+                return best[1]
+            left = min(0.12, deadline - time.monotonic())
+            if left <= 0:
+                break
+            if stream is None:
+                time.sleep(left)
+            else:
+                stream.wait(left)
+    finally:
+        if stream is not None:
+            stream.close()
     return None

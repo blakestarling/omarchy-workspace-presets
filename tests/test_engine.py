@@ -24,6 +24,9 @@ class FakeHyprland:
         self.actions = []
 
     def version(self): return {"version": "0.56.2"}
+    # No compositor to subscribe to, which is the same answer a session
+    # without an event socket gives: the waits fall back to sleeping.
+    def events(self, kinds): return None
     def active_workspace(self): return self.active_context()["workspace"]
     def active_context(self):
         return {
