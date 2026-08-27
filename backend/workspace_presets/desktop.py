@@ -10,9 +10,10 @@ import stat
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
+from . import SAFE_DESKTOP_ID
+
 
 FIELD_CODE = re.compile(r"^%[fFuUdDnNickvm]$")
-SAFE_DESKTOP_ID = re.compile(r"^[A-Za-z0-9_.+ -]+\.desktop$")
 # The values freedesktop's specification defines as boolean true.
 TRUE_VALUES = {"true", "1", "yes", "on"}
 TERMINAL_EXECUTABLES = {

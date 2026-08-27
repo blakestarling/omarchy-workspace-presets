@@ -27,6 +27,12 @@ TAG = re.compile(r"^[A-Za-z0-9_-]+$")
 # failure by exiting 7, and exactly those responses begin with "error:".
 ERROR_PREFIX = "error:"
 
+# An event line is a kind, an address, a workspace, a class and a title. The
+# title is the one part an application chooses, and a window can set one of any
+# length, so the buffer holding an unfinished line needs an end. Real lines are
+# well under a kilobyte.
+MAX_EVENT_LINE_BYTES = 64 * 1024
+
 
 class EventStream:
     """A subscription to Hyprland's event socket, used to stop guessing.
@@ -47,6 +53,9 @@ class EventStream:
     def __init__(self, path: str, kinds: set[str]):
         self._kinds = kinds
         self._buffer = b""
+        # Set while the remainder of an over-long line is being discarded, so
+        # the events after it are still read as events.
+        self._skipping = False
         self._socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         try:
             self._socket.connect(path)
@@ -92,9 +101,21 @@ class EventStream:
             matched = False
             while b"\n" in self._buffer:
                 line, self._buffer = self._buffer.split(b"\n", 1)
+                if self._skipping:
+                    # The tail of a line already given up on; its newline is
+                    # the resynchronisation point.
+                    self._skipping = False
+                    continue
                 kind = line.split(b">>", 1)[0].decode("utf-8", errors="replace")
                 if kind in self._kinds:
                     matched = True
+            if len(self._buffer) > MAX_EVENT_LINE_BYTES:
+                # Hyprland does not announce a line this long, and an event is
+                # only ever a wake-up here: the caller re-reads the client list
+                # either way, so dropping one costs at most the 120 ms poll
+                # this class exists to avoid.
+                self._buffer = b""
+                self._skipping = True
             if matched:
                 return True
 

@@ -3,7 +3,7 @@ import time
 import unittest
 from unittest.mock import patch
 
-from workspace_presets.hyprland import EventStream, Hyprland
+from workspace_presets.hyprland import MAX_EVENT_LINE_BYTES, EventStream, Hyprland
 from workspace_presets.errors import HyprlandError
 
 
@@ -219,6 +219,7 @@ class EventStreamTests(unittest.TestCase):
         stream = EventStream.__new__(EventStream)
         stream._kinds = kinds
         stream._buffer = b""
+        stream._skipping = False
         stream._socket = client
         client.setblocking(False)
         self.addCleanup(server.close)
@@ -241,6 +242,20 @@ class EventStreamTests(unittest.TestCase):
         self.assertFalse(stream.wait(0.05))
         server.sendall(b"8d\n")
         self.assertTrue(stream.wait(1.0))
+
+    def test_an_over_long_line_is_dropped_rather_than_buffered(self):
+        """The title is the one part of an event an application chooses, and a
+        window can set one of any length."""
+        server, stream = self._stream({"openwindow"})
+        server.sendall(b"openwindow>>558d,1,foot," + b"T" * MAX_EVENT_LINE_BYTES)
+        self.assertFalse(stream.wait(0.05))
+        self.assertLessEqual(len(stream._buffer), MAX_EVENT_LINE_BYTES)
+
+        # The tail of the giant line arrives, and the events behind it are
+        # still read as events rather than lost with it.
+        server.sendall(b"T" * 4096 + b"\nopenwindow>>558e,1,foot,foot\n")
+        self.assertTrue(stream.wait(1.0))
+        self.assertEqual(stream._buffer, b"")
 
     def test_a_closed_socket_returns_rather_than_hanging(self):
         server, stream = self._stream({"openwindow"})
