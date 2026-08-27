@@ -4,7 +4,7 @@ Save the application windows on a Hyprland workspace as a named preset, then col
 
 https://github.com/user-attachments/assets/23173b60-d237-480d-9cf8-21d0f34824c1
 
-This is a native Omarchy Quattro plugin: the bar widget and management panel run in `omarchy-shell`, while a bundled Python standard-library backend handles capture, validation, and restore orchestration.
+This is a native Omarchy Quattro plugin: the bar widget and management panel run in `omarchy-shell`, while a bundled Python standard-library backend handles capture, validation, and restore orchestration. The backend talks to Hyprland over its IPC socket directly and runs as a single short-lived worker that exits after two idle minutes, so the panel opens without waiting on process startup.
 
 ## What it restores
 
@@ -147,6 +147,8 @@ Enable **Confirm before startup launch** on the selected startup group if you do
 
 Startup restore is intentionally equivalent to a confirmed group launch: assigned workspaces are replaced with normal close requests and applications are never force-killed. If a launcher or preset becomes invalid, startup restore reports the error rather than partially skipping it.
 
+The startup launch runs ahead of the work that only fills the panel, and waits for monitor geometry to stop changing first, because saved geometry is normalized against the work area the bar reserves. Applications started at login are given 30 seconds to appear rather than the 12 seconds a manual load allows. If the session was not ready to be checked at all, the once-per-session guard is released so the next shell start can try again; once windows may have been closed or applications launched, it is not.
+
 ## Optional shell IPC
 
 The widget exposes the standard Omarchy shell panel actions:
@@ -209,7 +211,7 @@ Common restore failures:
 - **Desktop entry no longer exists:** open **Set up** and select the replacement entry.
 - **No new window appeared:** the app may be single-instance or need a custom `--new-window` command. Retry and choose **Move existing**, or configure a custom argv launcher.
 - **Application did not close:** respond to its save/discard dialog, then load again.
-- **Startup group did not run after a shell reload:** this is intentional; startup groups run at most once per Hyprland session. Log out and back in to test the next-session behavior.
+- **Startup group did not run after a shell reload:** this is intentional; startup groups run at most once per Hyprland session. Log out and back in to test the next-session behavior. A startup launch that failed before checking anything is the exception, and is retried on the next shell start.
 - **Preset is used by a group:** remove that preset's group assignment before deleting it.
 - **Unsupported layout or special workspace:** switch the active normal workspace to one of the four supported built-in layouts before saving/loading.
 - **Floating window moved after a monitor change:** exact pixels are used only when work-area size and scale match; otherwise geometry is normalized and clamped to the current monitor.
@@ -229,6 +231,8 @@ python3 -m compileall -q backend
 ```
 
 The backend's stdout is a newline-delimited JSON protocol. Commands emit `progress`, `result`, or structured `error` objects so the long-lived QML service never has to infer success from human-readable text.
+
+Each subcommand also runs standalone, which is what the examples above and the tests use. `main.py serve` is the form the shell uses: it reads one `{"id": ..., "args": [...]}` request per line on stdin and tags every event it emits with that id.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the live-workspace test matrix and release checklist.
 

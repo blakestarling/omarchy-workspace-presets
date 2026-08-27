@@ -2,6 +2,29 @@
 
 All notable changes to Workspace Presets are documented here.
 
+## 1.9.0 - 2026-08-26
+
+Performance work across the backend, the shell service, and the login path. Behaviour is unchanged: `list`, `groups`, `details`, `capabilities`, `desktop-entries`, `resolve-launchers` and `preflight` all produce byte-identical output, including the preflight confirmation token.
+
+- Talk to Hyprland over its IPC socket instead of spawning `hyprctl` per call - 9.2 ms against 0.12 ms measured, and an eight-window dwindle restore issues 69 of those calls in its finalize stage alone. hyprctl's own request grammar is reused, so responses are byte-identical.
+- Serve every command from one worker that exits after two idle minutes, instead of starting an interpreter and importing the backend for each. That setup was about 72 ms of the ~90 ms a `list` took. Startup sequence 766 ms to 213 ms; panel refresh 190 ms to 1.4 ms; preflight 459 ms to 24.5 ms.
+- Wait on the compositor's `openwindow`, `closewindow` and `activewindowv2` events rather than re-asking every 120 ms. Window detection drops from 123 ms to 69 ms. A missed or unavailable event falls back to exactly the old polling.
+- Parse desktop entries with a line reader rather than ConfigParser, which was the slowest step of a capture or preflight at 45 ms and 91% of everything it allocated. Same 108 entries, no value differences, 11 ms and 17 KiB.
+- Memoise the capability probe. Every preflight opened by re-running `omarchy version`, a shell script costing 80 ms, to re-answer a question that cannot change during a session. The panel's explicit recheck still probes.
+- Reuse the parsed store while the file is unchanged, and stop deep-copying the whole document to build summaries from it. Loading a five-workspace group read, validated and copied the entire store eleven times.
+- Apply every launcher repair in one write. A six-window draft rewrote and fsynced the whole store six times, on every service start.
+- Answer the presets and groups lists together with one `state` command and one read, so the panel opens with one request instead of two.
+- Relocate Python's bytecode cache with `PYTHONPYCACHEPREFIX` rather than disabling it with `-B`. The watched checkout stays just as inert and every command loses about a fifth of its time.
+- Read the process table once per capture rather than once per terminal window, scan panel-plugin manifests once per preflight rather than once per window slot, and drop `dataclasses` for the three small classes that used it.
+- Build the management and confirmation panels on first use rather than when the bar starts, and index group assignments once per refresh instead of searching every group per row.
+
+Login path:
+
+- Run the startup launch second rather than fifth, after the launcher repair pass it depends on and ahead of the work that only fills a panel nobody has opened. Time from service start to the launch request: 537 ms to 110 ms.
+- Wait for monitor geometry to settle before launching. Saved geometry is normalized against the work area the bar reserves, and the bar is this plugin's own host, so at login that reservation may not have landed yet. Stability is the test rather than a non-zero reservation, so a session with no bar does not wait out the timeout.
+- Allow 30 seconds for applications to appear at login rather than the interactive 12. They start against a cold page cache while the rest of the session is still coming up, and a miss is reported as a failed restore, never a partial one.
+- Release the once-per-session startup guard when the attempt failed before checking anything, so a session that simply was not ready yet stays retryable. A failure during the load itself keeps the guard: windows may already have been closed, and a retry must not launch anything twice.
+
 ## 1.8.3 - 2026-08-26
 
 Security hardening from a full audit of the backend, the Hyprland Lua bridge, and the QML surface.
