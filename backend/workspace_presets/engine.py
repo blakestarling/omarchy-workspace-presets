@@ -20,6 +20,7 @@ from .desktop import (
     resolve_launcher,
     scan_desktop_entries,
     scan_omarchy_panel_plugins,
+    scan_process_table,
     terminal_process_launcher,
 )
 from .errors import LaunchError, RestoreError, UnsupportedError, ValidationError
@@ -69,8 +70,23 @@ class WorkspaceEngine:
         self.store = store or PresetStore()
         self.hypr = hyprland or Hyprland()
         self.progress = progress or _noop_progress
+        self._capabilities: dict | None = None
 
-    def capabilities(self) -> dict:
+    def capabilities(self, *, refresh: bool = False) -> dict:
+        """Probe the installed compositor and Omarchy versions.
+
+        Every preflight opens with this check, and `omarchy version` is a shell
+        script costing about 80 ms - the bulk of a restore's fixed overhead, to
+        re-answer a question that cannot change while the session is running.
+        The panel's explicit recheck passes refresh=True.
+        """
+        if self._capabilities is not None and not refresh:
+            return self._capabilities
+        result = self._probe_capabilities()
+        self._capabilities = result
+        return result
+
+    def _probe_capabilities(self) -> dict:
         missing = [
             name for name in ("hyprctl", "uwsm-app", "gtk-launch", "omarchy-shell")
             if not shutil.which(name)
@@ -96,6 +112,13 @@ class WorkspaceEngine:
             "supportedLayouts": list(SUPPORTED_LAYOUTS),
             "dataPath": str(self.store.path),
         }
+
+    def await_stable_workarea(
+        self, *, timeout: float = 5.0, settle: float = 0.2
+    ) -> bool:
+        """Hold the startup launch until monitor geometry stops changing."""
+        self.progress("startup", "Waiting for the desktop to settle", None)
+        return self.hypr.await_stable_monitors(timeout=timeout, settle=settle)
 
     @staticmethod
     def _at_least(value: str, major: int, minor: int) -> bool:
@@ -124,6 +147,9 @@ class WorkspaceEngine:
         metadata = self.hypr.layout_metadata(clients)
         entries = scan_desktop_entries()
         panel_plugins = scan_omarchy_panel_plugins()
+        # Read the process table once for the whole workspace rather than once
+        # per terminal window.
+        process_table = scan_process_table()
         stable_to_slot: dict[str, str] = {
             str(client.get("stableId")): str(uuid.uuid4()) for client in clients
         }
@@ -142,7 +168,9 @@ class WorkspaceEngine:
                 "xwayland": bool(client.get("xwayland", False)),
             }
             resolution_input = {**client, "executable": executable}
-            terminal_launch = terminal_process_launcher(client.get("pid"), executable)
+            terminal_launch = terminal_process_launcher(
+                client.get("pid"), executable, records=process_table
+            )
             if terminal_launch:
                 launcher, terminal_program = terminal_launch
                 match["terminalProgram"] = terminal_program
@@ -376,8 +404,9 @@ class WorkspaceEngine:
         context = self.hypr.active_context()
         current = self.hypr.workspace_clients(int(context["workspace"]["id"]))
         entries = scan_desktop_entries()
+        panel_plugins = scan_omarchy_panel_plugins()
         for slot in preset["snapshot"]["windows"]:
-            self._validate_runtime_launcher(slot["launcher"], entries)
+            self._validate_runtime_launcher(slot["launcher"], entries, panel_plugins)
         other_clients = [
             item
             for item in self.hypr.clients()
@@ -449,17 +478,19 @@ class WorkspaceEngine:
         panel_plugins = scan_omarchy_panel_plugins()
         resolved = 0
         normalized = 0
-        changed_presets = 0
+        changed_ids: set[str] = set()
+        # Collected first so the whole repair pass is one write and one fsync
+        # rather than one per slot.
+        updates: list[tuple[str, str, dict]] = []
         for summary in self.store.list_summaries():
             preset = self.store.get(summary["id"])
-            changed = False
             for slot in preset.get("snapshot", {}).get("windows", []):
                 launcher, _ = resolve_launcher(slot.get("match", {}), entries, panel_plugins)
                 current = slot.get("launcher")
                 if not current and launcher:
-                    self.store.set_launcher(preset["id"], slot["id"], launcher)
+                    updates.append((preset["id"], slot["id"], launcher))
                     resolved += 1
-                    changed = True
+                    changed_ids.add(preset["id"])
                 elif (
                     launcher and launcher.get("kind") == "omarchy-plugin"
                     and current and current.get("kind") == "command"
@@ -467,11 +498,11 @@ class WorkspaceEngine:
                         "omarchy-shell", "shell", "summon", launcher["pluginId"], "{}"
                     ]
                 ):
-                    self.store.set_launcher(preset["id"], slot["id"], launcher)
+                    updates.append((preset["id"], slot["id"], launcher))
                     normalized += 1
-                    changed = True
-            if changed:
-                changed_presets += 1
+                    changed_ids.add(preset["id"])
+        self.store.set_launchers(updates)
+        changed_presets = len(changed_ids)
         return {
             "resolvedWindowCount": resolved,
             "normalizedLauncherCount": normalized,
@@ -495,6 +526,7 @@ class WorkspaceEngine:
             )
 
         entries = scan_desktop_entries()
+        panel_plugins = scan_omarchy_panel_plugins()
         all_clients = self.hypr.clients()
         targets = []
         preset_fingerprints = []
@@ -511,7 +543,9 @@ class WorkspaceEngine:
                 ).hexdigest(),
             ])
             for slot in preset["snapshot"]["windows"]:
-                self._validate_runtime_launcher(slot["launcher"], entries)
+                self._validate_runtime_launcher(
+                    slot["launcher"], entries, panel_plugins
+                )
             workspace_slot = int(assignment["workspace"])
             workspace_id = self.group_workspace_id(workspace_slot)
             current = [
@@ -690,7 +724,9 @@ class WorkspaceEngine:
         return result
 
     @staticmethod
-    def _validate_runtime_launcher(launcher: dict, entries: dict) -> None:
+    def _validate_runtime_launcher(
+        launcher: dict, entries: dict, panel_plugins: dict | None = None
+    ) -> None:
         PresetStore._validate_launcher(launcher)
         if launcher["kind"] == "desktop":
             if launcher["desktopId"] not in entries:
@@ -709,7 +745,11 @@ class WorkspaceEngine:
             plugin_id = launcher["pluginId"]
             if not shutil.which("omarchy-shell"):
                 raise ValidationError("Required command 'omarchy-shell' is not on PATH")
-            if plugin_id not in scan_omarchy_panel_plugins():
+            # Callers validating a whole preset pass one scan in; rescanning
+            # every plugin root per window cost 7 ms a slot.
+            if panel_plugins is None:
+                panel_plugins = scan_omarchy_panel_plugins()
+            if plugin_id not in panel_plugins:
                 raise ValidationError(f"Omarchy plugin {plugin_id!r} is no longer installed")
 
     def load(
@@ -883,37 +923,54 @@ class WorkspaceEngine:
                 f"Opening {', '.join(labels)}",
                 {"wave": wave_index, "waves": len(waves), "current": len(launched), "total": total},
             )
-            for task in wave:
-                self._launch_on_workspace(
-                    task["slot"]["launcher"], task["workspaceId"]
-                )
+            # Subscribed before anything is launched so a window that maps
+            # immediately cannot be missed.
+            events = self.hypr.events({"openwindow"})
+            try:
+                for task in wave:
+                    self._launch_on_workspace(
+                        task["slot"]["launcher"], task["workspaceId"]
+                    )
 
-            unresolved = {task["key"]: task for task in wave}
-            assigned_ids: set[str] = set()
-            deadline = time.monotonic() + launch_timeout
-            while unresolved and time.monotonic() < deadline:
-                candidates = []
-                for candidate in self.hypr.clients():
-                    stable_id = str(candidate.get("stableId", candidate.get("address", "")))
-                    if stable_id in before or stable_id in assigned_ids:
-                        continue
-                    for key, task in unresolved.items():
-                        score = window_match_score(candidate, task["slot"]["match"])
-                        if score >= 100:
-                            candidates.append((score, stable_id, key, candidate))
-                for _score, stable_id, key, candidate in sorted(
-                    candidates, key=lambda item: (item[0], item[1], item[2]), reverse=True
-                ):
-                    if key not in unresolved or stable_id in assigned_ids:
-                        continue
-                    task = unresolved.pop(key)
-                    assigned_ids.add(stable_id)
-                    self.hypr.move_to_workspace(candidate, task["workspaceId"])
-                    self.hypr.set_floating(candidate, True)
-                    windows[key] = self.hypr.find_window(stable_id) or candidate
-                    launched.append(key)
-                if unresolved:
-                    time.sleep(0.12)
+                unresolved = {task["key"]: task for task in wave}
+                assigned_ids: set[str] = set()
+                deadline = time.monotonic() + launch_timeout
+                while unresolved and time.monotonic() < deadline:
+                    candidates = []
+                    for candidate in self.hypr.clients():
+                        stable_id = str(candidate.get("stableId", candidate.get("address", "")))
+                        if stable_id in before or stable_id in assigned_ids:
+                            continue
+                        for key, task in unresolved.items():
+                            score = window_match_score(candidate, task["slot"]["match"])
+                            if score >= 100:
+                                candidates.append((score, stable_id, key, candidate))
+                    for _score, stable_id, key, candidate in sorted(
+                        candidates, key=lambda item: (item[0], item[1], item[2]), reverse=True
+                    ):
+                        if key not in unresolved or stable_id in assigned_ids:
+                            continue
+                        task = unresolved.pop(key)
+                        assigned_ids.add(stable_id)
+                        self.hypr.move_to_workspace(candidate, task["workspaceId"])
+                        self.hypr.set_floating(candidate, True)
+                        windows[key] = self.hypr.find_window(stable_id) or candidate
+                        launched.append(key)
+                    if not unresolved:
+                        break
+                    # An application maps roughly 65 ms after launching, where
+                    # this loop used to wait out a fixed 120 ms before looking.
+                    # The cap keeps a missed event no worse than that.
+                    left = min(0.12, deadline - time.monotonic())
+                    if left <= 0:
+                        break
+                    if events is None:
+                        time.sleep(left)
+                    else:
+                        events.wait(left)
+            finally:
+                if events is not None:
+                    events.close()
 
             if unresolved:
                 task = next(iter(unresolved.values()))

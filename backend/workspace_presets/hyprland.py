@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
+import select
 import shlex
-import shutil
-import subprocess
+import socket
 import time
 from pathlib import Path
 
@@ -22,31 +23,149 @@ STABLE_ID = re.compile(r"^[0-9a-fA-F]+$")
 ADDRESS = re.compile(r"^0x[0-9a-fA-F]+$")
 TAG = re.compile(r"^[A-Za-z0-9_-]+$")
 
+# hyprctl is a thin client over this socket. It reports a Lua or dispatcher
+# failure by exiting 7, and exactly those responses begin with "error:".
+ERROR_PREFIX = "error:"
+
+
+class EventStream:
+    """A subscription to Hyprland's event socket, used to stop guessing.
+
+    Every wait in a restore used to sleep a fixed interval and re-ask what the
+    windows were doing, which both burned queries and added up to half that
+    interval of latency per window. Hyprland announces these exact transitions
+    on ``.socket2.sock``: an ``openwindow`` arrives about 65 ms after a launch,
+    where the old loop would not have looked again for another 120 ms.
+
+    The events are only a wake-up. They carry addresses, not the stable IDs the
+    matching works in, so the caller still re-reads the client list - it just
+    does so when something has actually changed. Waiting is capped at the
+    interval the loop used to sleep, so a missed or unparsed event degrades to
+    exactly the old polling behaviour rather than hanging.
+    """
+
+    def __init__(self, path: str, kinds: set[str]):
+        self._kinds = kinds
+        self._buffer = b""
+        self._socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            self._socket.connect(path)
+            self._socket.setblocking(False)
+        except OSError:
+            self._socket.close()
+            raise
+
+    def __enter__(self) -> "EventStream":
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.close()
+
+    def close(self) -> None:
+        try:
+            self._socket.close()
+        except OSError:
+            pass
+
+    def wait(self, timeout: float) -> bool:
+        """Block until a subscribed event arrives or ``timeout`` elapses."""
+        deadline = time.monotonic() + timeout
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            try:
+                ready, _, _ = select.select([self._socket], [], [], remaining)
+            except (OSError, ValueError):
+                return False
+            if not ready:
+                return False
+            try:
+                block = self._socket.recv(65536)
+            except BlockingIOError:
+                continue
+            except OSError:
+                return False
+            if not block:
+                return False
+            self._buffer += block
+            matched = False
+            while b"\n" in self._buffer:
+                line, self._buffer = self._buffer.split(b"\n", 1)
+                kind = line.split(b">>", 1)[0].decode("utf-8", errors="replace")
+                if kind in self._kinds:
+                    matched = True
+            if matched:
+                return True
+
 
 class Hyprland:
     def __init__(self, *, timeout: float = 8.0):
         self.timeout = timeout
+        self._socket_path: str | None = None
+
+    def events(self, kinds: set[str]) -> EventStream | None:
+        """Subscribe to window lifecycle events, or None if unavailable.
+
+        Callers must subscribe before the action they are waiting on, so a
+        transition cannot slip between the two.
+        """
+        try:
+            path = self.socket_path().replace(".socket.sock", ".socket2.sock")
+            return EventStream(path, kinds)
+        except (OSError, UnsupportedError):
+            return None
+
+    def socket_path(self) -> str:
+        """Return this session's Hyprland IPC socket, or raise if there is none.
+
+        Spawning hyprctl per call cost a fork, an exec and a dynamic link to
+        send a few bytes to this same socket - about 9 ms against 0.1 ms here,
+        which dominated every restore. hyprctl's own request grammar is used
+        verbatim so responses stay byte-identical.
+        """
+        if self._socket_path is None:
+            signature = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", "")
+            runtime = os.environ.get("XDG_RUNTIME_DIR", "")
+            if not signature or not runtime:
+                raise UnsupportedError(
+                    "No Hyprland session is available on this display"
+                )
+            self._socket_path = f"{runtime}/hypr/{signature}/.socket.sock"
+        return self._socket_path
+
+    @staticmethod
+    def _request(args: list[str]) -> str:
+        """Translate an argv hyprctl would have been given into its wire form."""
+        rest = args[1:]
+        flags = ""
+        if rest and rest[-1] == "-j":
+            rest = rest[:-1]
+            flags = "j/"
+        return flags + " ".join(rest)
 
     def _run(self, args: list[str], *, json_result: bool = False, check: bool = True) -> object:
-        if not shutil.which(args[0]):
-            raise UnsupportedError(f"Required command {args[0]!r} is not installed")
+        request = self._request(args)
         try:
-            result = subprocess.run(
-                args,
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=self.timeout,
-            )
-        except (OSError, subprocess.TimeoutExpired) as exc:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as stream:
+                stream.settimeout(self.timeout)
+                stream.connect(self.socket_path())
+                stream.sendall(request.encode())
+                blocks = []
+                while True:
+                    block = stream.recv(65536)
+                    if not block:
+                        break
+                    blocks.append(block)
+        except OSError as exc:
             raise HyprlandError(f"Cannot run {' '.join(args[:2])}: {exc}") from exc
-        if check and result.returncode != 0:
-            message = result.stderr.strip() or result.stdout.strip() or "unknown IPC error"
-            raise HyprlandError(f"{' '.join(args[:2])} failed: {message}")
+        output = b"".join(blocks).decode("utf-8", errors="replace")
+        if check and output.startswith(ERROR_PREFIX):
+            raise HyprlandError(f"{' '.join(args[:2])} failed: {output.strip()}")
         if not json_result:
-            return result.stdout.strip()
+            return output.strip()
         try:
-            return json.loads(result.stdout)
+            return json.loads(output)
         except json.JSONDecodeError as exc:
             raise HyprlandError(f"Hyprland returned invalid JSON: {exc}") from exc
 
@@ -80,6 +199,43 @@ class Hyprland:
     def version(self) -> dict:
         value = self.query("version")
         return value if isinstance(value, dict) else {}
+
+    @staticmethod
+    def _monitor_geometry(monitors: list[dict]) -> list[tuple]:
+        return sorted(
+            (
+                str(monitor.get("name", "")),
+                tuple(monitor.get("reserved", [0, 0, 0, 0])),
+                monitor.get("width"),
+                monitor.get("height"),
+                monitor.get("scale"),
+                monitor.get("transform"),
+            )
+            for monitor in monitors
+        )
+
+    def await_stable_monitors(
+        self, *, timeout: float = 5.0, settle: float = 0.2
+    ) -> bool:
+        """Wait until two consecutive reads report the same monitor geometry.
+
+        Saved geometry is normalized against the work area, which is the
+        monitor minus whatever the bar has reserved. This plugin is hosted by
+        that bar, so at login its own reservation may not have landed when the
+        startup group runs, and every floating window would then be placed
+        against a work area that never existed. Stability is the test rather
+        than a non-zero reservation, because a session with no bar at all is
+        legitimate and must not be made to wait for the timeout.
+        """
+        deadline = time.monotonic() + timeout
+        previous = self._monitor_geometry(self.monitors())
+        while time.monotonic() < deadline:
+            time.sleep(settle)
+            current = self._monitor_geometry(self.monitors())
+            if current == previous:
+                return True
+            previous = current
+        return False
 
     def active_context(self) -> dict:
         workspace = self.active_workspace()
@@ -211,20 +367,33 @@ class Hyprland:
         active column or node even though the focus dispatcher succeeded.
         """
         selector = self.selector(window)
-        self.focus(window)
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            active = self.active_window()
-            if active is not None:
-                if selector.startswith("stableid:") and str(
-                    active.get("stableId", "")
-                ) == selector.removeprefix("stableid:"):
-                    return
-                if selector.startswith("address:") and str(
-                    active.get("address", "")
-                ) == selector.removeprefix("address:"):
-                    return
-            time.sleep(0.005)
+        # Subscribed before the dispatch so the announcement cannot arrive in
+        # the gap between focusing and starting to watch.
+        stream = self.events({"activewindowv2", "activewindow"})
+        try:
+            self.focus(window)
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                active = self.active_window()
+                if active is not None:
+                    if selector.startswith("stableid:") and str(
+                        active.get("stableId", "")
+                    ) == selector.removeprefix("stableid:"):
+                        return
+                    if selector.startswith("address:") and str(
+                        active.get("address", "")
+                    ) == selector.removeprefix("address:"):
+                        return
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                if stream is None:
+                    time.sleep(min(0.005, remaining))
+                elif not stream.wait(min(0.005, remaining)):
+                    continue
+        finally:
+            if stream is not None:
+                stream.close()
         raise HyprlandError(
             f"Could not focus {selector} before applying its saved layout"
         )
@@ -571,11 +740,25 @@ class Hyprland:
     def wait_until_closed(self, stable_ids: set[str], timeout: float) -> set[str]:
         deadline = time.monotonic() + timeout
         remaining = set(stable_ids)
-        while remaining and time.monotonic() < deadline:
-            present = {str(item.get("stableId")) for item in self.clients()}
-            remaining &= present
-            if remaining:
-                time.sleep(0.15)
+        stream = self.events({"closewindow"})
+        try:
+            while remaining and time.monotonic() < deadline:
+                present = {str(item.get("stableId")) for item in self.clients()}
+                remaining &= present
+                if not remaining:
+                    break
+                # Capped at the interval this loop used to sleep, so a missed
+                # event is no worse than the old poll.
+                left = min(0.15, deadline - time.monotonic())
+                if left <= 0:
+                    break
+                if stream is None:
+                    time.sleep(left)
+                else:
+                    stream.wait(left)
+        finally:
+            if stream is not None:
+                stream.close()
         return remaining
 
 
@@ -605,15 +788,26 @@ def wait_for_new_window(
 ) -> dict | None:
     deadline = time.monotonic() + timeout
     best: tuple[int, dict] | None = None
-    while time.monotonic() < deadline:
-        for candidate in hypr.clients():
-            stable = str(candidate.get("stableId", candidate.get("address", "")))
-            if stable in before:
-                continue
-            score = window_match_score(candidate, match)
-            if score >= 100 and (best is None or score > best[0]):
-                best = (score, candidate)
-        if best:
-            return best[1]
-        time.sleep(0.12)
+    stream = hypr.events({"openwindow"})
+    try:
+        while time.monotonic() < deadline:
+            for candidate in hypr.clients():
+                stable = str(candidate.get("stableId", candidate.get("address", "")))
+                if stable in before:
+                    continue
+                score = window_match_score(candidate, match)
+                if score >= 100 and (best is None or score > best[0]):
+                    best = (score, candidate)
+            if best:
+                return best[1]
+            left = min(0.12, deadline - time.monotonic())
+            if left <= 0:
+                break
+            if stream is None:
+                time.sleep(left)
+            else:
+                stream.wait(left)
+    finally:
+        if stream is not None:
+            stream.close()
     return None

@@ -41,6 +41,10 @@ class PresetStore:
     def __init__(self, path: Path | None = None):
         self.path = path or state_path()
         self.lock_path = self.path.with_suffix(".lock")
+        # Identity of the file the cached document was parsed from. Every write
+        # lands through os.replace, so a change always produces a new inode.
+        self._cache_key: tuple | None = None
+        self._cached: dict | None = None
 
     @staticmethod
     def empty() -> dict:
@@ -86,18 +90,41 @@ class PresetStore:
         finally:
             os.close(descriptor)
 
-    def _read_unlocked(self) -> dict:
-        if not self.path.exists():
+    def _shared_unlocked(self) -> dict:
+        """Return the validated document, reusing the parse while the file is unchanged.
+
+        The caller must not mutate the result. Re-reading, re-parsing and
+        re-validating the whole store for each of the several reads a single
+        command makes was most of what loading a preset group spent on disk;
+        a stat is free by comparison and still notices another process's write.
+        """
+        try:
+            status = self.path.stat()
+        except FileNotFoundError:
+            self._cache_key, self._cached = None, None
             return self.empty()
+        except OSError as exc:
+            raise ValidationError(f"Cannot read preset data: {exc}") from exc
+        key = (status.st_ino, status.st_size, status.st_mtime_ns)
+        if self._cached is not None and self._cache_key == key:
+            return self._cached
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise ValidationError(f"Cannot read preset data: {exc}") from exc
-        return self._validate_root(data)
+        # _validate_root also upgrades older documents in place, so cache what
+        # it returns rather than what was parsed.
+        validated = self._validate_root(data)
+        self._cache_key, self._cached = key, validated
+        return validated
+
+    def _read_unlocked(self) -> dict:
+        """Return a document the caller is free to mutate and write back."""
+        return copy.deepcopy(self._shared_unlocked())
 
     def load(self) -> dict:
         with self._locked(exclusive=False):
-            return copy.deepcopy(self._read_unlocked())
+            return self._read_unlocked()
 
     def _write_unlocked(self, data: dict) -> None:
         data = self._validate_root(data)
@@ -266,21 +293,28 @@ class PresetStore:
                     "class": slot.get("match", {}).get("class", ""),
                     "title": slot.get("match", {}).get("title", ""),
                     "program": slot.get("match", {}).get("terminalProgram", ""),
-                    "launcher": slot.get("launcher"),
+                    # Detached: the caller may hold this after the store has
+                    # moved on, and in a long-lived process the source dict is
+                    # the cached document itself.
+                    "launcher": copy.deepcopy(slot.get("launcher")),
                 }
                 for slot in windows
             ],
         }
 
+    def _shared(self) -> dict:
+        with self._locked(exclusive=False):
+            return self._shared_unlocked()
+
     def list_summaries(self) -> list[dict]:
-        data = self.load()
+        data = self._shared()
         presets = sorted(
             data["presets"], key=lambda item: item.get("updatedAt", ""), reverse=True
         )
         return [self.public_summary(item) for item in presets]
 
     def list_group_summaries(self) -> list[dict]:
-        data = self.load()
+        data = self._shared()
         presets = {item["id"]: self.public_summary(item) for item in data["presets"]}
         groups = sorted(
             data["presetGroups"], key=lambda item: item.get("updatedAt", ""), reverse=True
@@ -328,17 +362,17 @@ class PresetStore:
         }
 
     def get_group(self, group_id: str) -> dict:
-        data = self.load()
+        data = self._shared()
         for group in data["presetGroups"]:
             if group["id"] == group_id:
                 return copy.deepcopy(group)
         raise ValidationError(f"Preset group {group_id!r} does not exist")
 
     def startup_group_id(self) -> str | None:
-        return self.load().get("startupGroupId")
+        return self._shared().get("startupGroupId")
 
     def startup_settings(self) -> dict:
-        data = self.load()
+        data = self._shared()
         return {
             "startupGroupId": data.get("startupGroupId"),
             "confirmStartupLaunch": data.get("confirmStartupLaunch", False),
@@ -415,7 +449,7 @@ class PresetStore:
             return enabled
 
     def get(self, preset_id: str) -> dict:
-        data = self.load()
+        data = self._shared()
         for preset in data["presets"]:
             if preset["id"] == preset_id:
                 return copy.deepcopy(preset)
@@ -513,26 +547,47 @@ class PresetStore:
             return copy.deepcopy(target)
 
     def set_launcher(self, preset_id: str, slot_id: str, launcher: dict) -> dict:
-        self._validate_launcher(launcher)
+        return self.set_launchers([(preset_id, slot_id, launcher)])[preset_id]
+
+    def set_launchers(
+        self, updates: list[tuple[str, str, dict]]
+    ) -> dict[str, dict]:
+        """Apply every launcher assignment inside one lock and one write.
+
+        Repairing drafts at service start wrote and fsynced the whole store
+        once per slot, so a preset needing six repairs rewrote it six times.
+        """
+        for _preset_id, _slot_id, launcher in updates:
+            self._validate_launcher(launcher)
+        if not updates:
+            return {}
         with self._locked(exclusive=True):
             data = self._read_unlocked()
-            target = next((p for p in data["presets"] if p["id"] == preset_id), None)
-            if target is None:
-                raise ValidationError(f"Preset {preset_id!r} does not exist")
-            slot = next(
-                (
-                    item
-                    for item in target.get("snapshot", {}).get("windows", [])
-                    if item.get("id") == slot_id
-                ),
-                None,
-            )
-            if slot is None:
-                raise ValidationError(f"Window slot {slot_id!r} does not exist")
-            slot["launcher"] = launcher
-            target["updatedAt"] = utc_now()
+            presets = {preset["id"]: preset for preset in data["presets"]}
+            now = utc_now()
+            touched: dict[str, dict] = {}
+            for preset_id, slot_id, launcher in updates:
+                target = presets.get(preset_id)
+                if target is None:
+                    raise ValidationError(f"Preset {preset_id!r} does not exist")
+                slot = next(
+                    (
+                        item
+                        for item in target.get("snapshot", {}).get("windows", [])
+                        if item.get("id") == slot_id
+                    ),
+                    None,
+                )
+                if slot is None:
+                    raise ValidationError(f"Window slot {slot_id!r} does not exist")
+                slot["launcher"] = launcher
+                target["updatedAt"] = now
+                touched[preset_id] = target
             self._write_unlocked(data)
-            return copy.deepcopy(target)
+            return {
+                preset_id: copy.deepcopy(target)
+                for preset_id, target in touched.items()
+            }
 
     @staticmethod
     def _validate_launcher(launcher: object) -> None:

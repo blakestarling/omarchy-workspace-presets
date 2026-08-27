@@ -1,7 +1,9 @@
+import socket
+import time
 import unittest
 from unittest.mock import patch
 
-from workspace_presets.hyprland import Hyprland
+from workspace_presets.hyprland import EventStream, Hyprland
 from workspace_presets.errors import HyprlandError
 
 
@@ -207,6 +209,65 @@ class HyprlandLuaDispatcherTests(unittest.TestCase):
         lua = hypr.calls[0][0][2]
         self.assertIn("r.ok==false", lua)
         self.assertIn("Workspace Presets dispatch failed", lua)
+
+
+class EventStreamTests(unittest.TestCase):
+    """The stream is only a wake-up; the caller still re-reads the truth."""
+
+    def _stream(self, kinds):
+        server, client = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
+        stream = EventStream.__new__(EventStream)
+        stream._kinds = kinds
+        stream._buffer = b""
+        stream._socket = client
+        client.setblocking(False)
+        self.addCleanup(server.close)
+        self.addCleanup(stream.close)
+        return server, stream
+
+    def test_a_subscribed_event_wakes_the_waiter(self):
+        server, stream = self._stream({"openwindow"})
+        server.sendall(b"openwindow>>558d,1,foot,foot\n")
+        self.assertTrue(stream.wait(1.0))
+
+    def test_an_unsubscribed_event_does_not(self):
+        server, stream = self._stream({"openwindow"})
+        server.sendall(b"workspacev2>>1,1\nactivewindow>>foot,foot\n")
+        self.assertFalse(stream.wait(0.05))
+
+    def test_an_event_split_across_reads_still_matches(self):
+        server, stream = self._stream({"closewindow"})
+        server.sendall(b"closewindow>>55")
+        self.assertFalse(stream.wait(0.05))
+        server.sendall(b"8d\n")
+        self.assertTrue(stream.wait(1.0))
+
+    def test_a_closed_socket_returns_rather_than_hanging(self):
+        server, stream = self._stream({"openwindow"})
+        server.close()
+        self.assertFalse(stream.wait(1.0))
+
+    def test_waits_fall_back_to_sleeping_when_no_stream_is_available(self):
+        """A session with no event socket must behave exactly as before."""
+
+        class NoEventsHyprland(Hyprland):
+            def __init__(self):
+                super().__init__()
+                self.queries = 0
+
+            def events(self, kinds):
+                return None
+
+            def clients(self):
+                self.queries += 1
+                return [] if self.queries > 1 else [{"stableId": "7"}]
+
+        hypr = NoEventsHyprland()
+        started = time.monotonic()
+        remaining = hypr.wait_until_closed({"7"}, 1.0)
+        self.assertEqual(remaining, set())
+        self.assertGreaterEqual(hypr.queries, 2)
+        self.assertLess(time.monotonic() - started, 1.0)
 
 
 if __name__ == "__main__":

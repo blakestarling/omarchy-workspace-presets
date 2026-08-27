@@ -1,4 +1,5 @@
 import QtQuick
+import Quickshell
 import Quickshell.Io
 
 Item {
@@ -9,6 +10,20 @@ Item {
   readonly property string moduleName: "blakestarling.workspace-presets"
   readonly property string sourceDir: manifest && manifest.__sourceDir ? String(manifest.__sourceDir) : ""
   readonly property string backendPath: sourceDir === "" ? "" : sourceDir + "/backend/main.py"
+
+  // Omarchy watches every file under an installed plugin, so Python bytecode
+  // caches written next to the source would reload this service while its
+  // first command is still running. Relocating the cache keeps the checkout
+  // inert without paying to recompile every module on every command, which
+  // -B did.
+  readonly property string bytecodeCacheDir: {
+    var cache = String(Quickshell.env("XDG_CACHE_HOME") || "")
+    if (cache === "") {
+      var home = String(Quickshell.env("HOME") || "")
+      cache = home === "" ? String(Quickshell.cacheDir || "") : home + "/.cache"
+    }
+    return cache === "" ? "" : cache + "/omarchy-workspace-presets/pycache"
+  }
 
   property var presets: []
   property var presetGroups: []
@@ -27,6 +42,13 @@ Item {
   property var commandQueue: []
   property bool refreshAfterCurrent: false
   property int loadStartedSerial: 0
+  // The worker answers one request at a time and tags every event it emits
+  // with the id it was given, so a reply that arrives after a restart can be
+  // recognised as stale rather than credited to the wrong command.
+  property int requestSerial: 0
+  property int currentRequestId: 0
+  property bool workerReady: false
+  property bool workerFailedToStart: false
 
   signal changed()
   signal confirmationRequested()
@@ -34,11 +56,14 @@ Item {
   function initialize() {
     if (initialized || backendPath === "") return
     initialized = true
-    enqueue(["capabilities"], "capabilities")
+    // The startup launch is the only queued command anyone is waiting on at
+    // login, so nothing that merely fills a closed panel runs ahead of it.
+    // resolve-launchers stays first because it can repair a draft the startup
+    // group depends on.
     enqueue(["resolve-launchers"], "resolve-launchers")
-    enqueue(["list"], "list")
-    enqueue(["groups"], "groups")
     enqueue(["startup-group"], "startup-group")
+    enqueue(["capabilities"], "capabilities")
+    enqueue(["state"], "state")
   }
 
   onManifestChanged: Qt.callLater(root.initialize)
@@ -56,6 +81,7 @@ Item {
   }
 
   function enqueue(args, operation, refreshAfter) {
+    workerFailedToStart = false
     var next = commandQueue.slice()
     next.push({ args: args, operation: operation, refreshAfter: refreshAfter === true })
     commandQueue = next
@@ -64,6 +90,17 @@ Item {
 
   function startNext() {
     if (busy || commandQueue.length === 0 || backendPath === "") return
+    if (!backend.running) {
+      // Starting an interpreter and importing the backend cost more than most
+      // commands do, so one worker serves them all and is restarted only when
+      // it exits - on its own idle timeout, or because it failed.
+      workerReady = false
+      backend.stderrText = ""
+      backend.command = ["python3", backendPath, "serve"]
+      backend.running = true
+      return
+    }
+    if (!workerReady) return
     var next = commandQueue[0]
     commandQueue = commandQueue.slice(1)
     currentOperation = next.operation
@@ -72,21 +109,42 @@ Item {
     statusMessage = "Working…"
     errorMessage = ""
     lastResult = null
-    backend.stderrText = ""
     backend.hadStructuredError = false
-    // Omarchy watches every file under an installed plugin. Python bytecode
-    // caches would therefore reload this service while its first command is
-    // still running, so the worker must leave the checkout completely inert.
-    backend.command = ["python3", "-B", backendPath].concat(next.args)
+    requestSerial += 1
+    currentRequestId = requestSerial
     busy = true
-    backend.running = true
+    backend.write(JSON.stringify({ id: currentRequestId, args: next.args }) + "\n")
   }
 
-  function refresh() {
-    enqueue(["list"], "list")
-    enqueue(["groups"], "groups")
+  function finishCommand(succeeded) {
+    busy = false
+    currentRequestId = 0
+    if (refreshAfterCurrent) {
+      refreshAfterCurrent = false
+      // A refresh starts a new command, which intentionally clears the
+      // current error. Only refresh after success so failed restores remain
+      // visible instead of appearing to do nothing.
+      if (succeeded) enqueue(["state"], "state")
+    }
+    Qt.callLater(root.startNext)
   }
-  function refreshCapabilities() { enqueue(["capabilities"], "capabilities") }
+
+  function failCurrentCommand(message) {
+    if (!busy) return
+    errorMessage = message
+    statusMessage = message
+    if (currentOperation === "capabilities") {
+      capabilitiesChecked = true
+      capabilities = ({ ready: false, missingCommands: [], error: message })
+    }
+    finishCommand(false)
+    changed()
+  }
+
+  function refresh() { enqueue(["state"], "state") }
+  function refreshCapabilities() {
+    enqueue(["capabilities", "--refresh"], "capabilities")
+  }
   function loadDetails(presetId) { enqueue(["details", "--id", String(presetId)], "details") }
   function loadDesktopEntries() {
     if (desktopEntries.length === 0) enqueue(["desktop-entries"], "desktop-entries")
@@ -224,6 +282,15 @@ Item {
       errorMessage = "Backend returned unreadable output"
       return
     }
+    if (event.type === "ready") {
+      workerReady = true
+      workerFailedToStart = false
+      Qt.callLater(root.startNext)
+      return
+    }
+    // A reply the worker produced for a command that has already been given up
+    // on - after a restart, say - must not be credited to the current one.
+    if (event.requestId !== undefined && Number(event.requestId) !== currentRequestId) return
     if (event.type === "progress") {
       progressStage = String(event.stage || currentOperation)
       statusMessage = String(event.message || "Working…")
@@ -238,12 +305,18 @@ Item {
         capabilitiesChecked = true
         capabilities = ({ ready: false, missingCommands: [], error: errorMessage })
       }
+      finishCommand(false)
       return
     }
     if (event.type !== "result") return
     lastResult = event.data
     var operation = String(event.operation || currentOperation)
-    if (operation === "list") {
+    if (operation === "state") {
+      var payload = event.data || ({})
+      presets = Array.isArray(payload.presets) ? payload.presets : []
+      presetGroups = Array.isArray(payload.groups) ? payload.groups : []
+      statusMessage = presets.length === 0 ? "No presets saved yet" : "Ready"
+    } else if (operation === "list") {
       presets = Array.isArray(event.data) ? event.data : []
       statusMessage = presets.length === 0 ? "No presets saved yet" : "Ready"
     } else if (operation === "groups") {
@@ -292,6 +365,7 @@ Item {
       } else if (operation === "group-load") statusMessage = "Preset group loaded"
       else statusMessage = operation === "load" ? "Preset loaded" : "Preset updated"
     }
+    finishCommand(true)
     changed()
   }
 
@@ -299,6 +373,16 @@ Item {
     id: backend
     property string stderrText: ""
     property bool hadStructuredError: false
+
+    stdinEnabled: true
+
+    // Merged into the inherited environment; a bytecode cache outside the
+    // plugin tree is worth about a fifth of every command's wall time. When no
+    // cache directory can be resolved, fall back to writing none at all rather
+    // than letting Python write one into the watched checkout.
+    environment: root.bytecodeCacheDir === ""
+      ? ({ "PYTHONDONTWRITEBYTECODE": "1" })
+      : ({ "PYTHONPYCACHEPREFIX": root.bytecodeCacheDir })
 
     stdout: SplitParser {
       onRead: function(line) { root.handleLine(line) }
@@ -310,26 +394,28 @@ Item {
       }
     }
     onExited: function(exitCode) {
-      root.busy = false
-      var succeeded = exitCode === 0 && !backend.hadStructuredError
-      if (exitCode !== 0 && !backend.hadStructuredError) {
-        root.errorMessage = backend.stderrText || "Backend exited with status " + exitCode
-        root.statusMessage = root.errorMessage
-        if (root.currentOperation === "capabilities") {
-          root.capabilitiesChecked = true
-          root.capabilities = ({ ready: false, missingCommands: [], error: root.errorMessage })
-        }
+      var wasReady = root.workerReady
+      root.workerReady = false
+      root.currentRequestId = 0
+      if (root.busy) {
+        // The worker died mid-command. Report it as this command's failure
+        // rather than silently dropping the request.
+        root.failCurrentCommand(
+          backend.stderrText || "Backend exited with status " + exitCode
+        )
       }
-      if (root.refreshAfterCurrent) {
-        root.refreshAfterCurrent = false
-        // A refresh starts a new command, which intentionally clears the
-        // current error. Only refresh after success so failed restores remain
-        // visible instead of appearing to do nothing.
-        if (succeeded) {
-          root.enqueue(["list"], "list")
-          root.enqueue(["groups"], "groups")
+      if (!wasReady) {
+        // It never finished starting, so the queue would spin restarting it.
+        root.workerFailedToStart = true
+        root.commandQueue = []
+        if (root.errorMessage === "") {
+          root.errorMessage = backend.stderrText || "Workspace Presets backend could not start"
+          root.statusMessage = root.errorMessage
         }
+        return
       }
+      // A clean exit is the worker's own idle timeout; the next command
+      // starts it again.
       Qt.callLater(root.startNext)
     }
   }

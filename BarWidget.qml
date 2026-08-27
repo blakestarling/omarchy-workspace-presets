@@ -8,6 +8,8 @@ BarWidget {
   moduleName: "blakestarling.workspace-presets"
 
   readonly property var presetService: bar?.shell?.serviceFor(moduleName)
+  // Set when open() arrives before the panel component has finished loading.
+  property bool pendingOpen: false
   readonly property bool opened: (panelLoader.item && panelLoader.item.opened === true)
     || (confirmationLoader.item && confirmationLoader.item.opened === true)
   readonly property bool popoutSwitchClosing:
@@ -22,9 +24,17 @@ BarWidget {
     if ("hostWidget" in target) target.hostWidget = root
   }
 
+  // Panel.qml is ~200 items once its components expand, built per bar. Nothing
+  // needs it until someone opens it, so it is loaded on first use and then
+  // kept - reopening is common, and a second build would be visible.
   function open() {
-    if (root.presetService && root.presetService.pendingPreflight) showConfirmation()
-    else if (panelLoader.item) panelLoader.item.openFromHotkey()
+    if (root.presetService && root.presetService.pendingPreflight) {
+      showConfirmation()
+      return
+    }
+    panelLoader.active = true
+    if (panelLoader.item) panelLoader.item.openFromHotkey()
+    else pendingOpen = true
   }
   function close() {
     confirmationDelay.stop()
@@ -64,6 +74,7 @@ BarWidget {
 
   function showConfirmation() {
     if (!root.presetService || !root.presetService.pendingPreflight) return
+    confirmationLoader.active = true
     if (confirmationLoader.item && confirmationLoader.item.opened) return
     if (panelLoader.item && panelLoader.item.opened) {
       panelLoader.item.closeForConfirmation()
@@ -91,18 +102,24 @@ BarWidget {
 
   Loader {
     id: panelLoader
-    active: true
+    active: false
     source: Qt.resolvedUrl("Panel.qml")
     visible: false
     onLoaded: {
       root.injectPanel(panelLoader.item)
-      Qt.callLater(function() { root.injectPanel(panelLoader.item) })
+      Qt.callLater(function() {
+        root.injectPanel(panelLoader.item)
+        if (root.pendingOpen) {
+          root.pendingOpen = false
+          panelLoader.item.openFromHotkey()
+        }
+      })
     }
   }
 
   Loader {
     id: confirmationLoader
-    active: true
+    active: false
     source: Qt.resolvedUrl("ConfirmationPanel.qml")
     visible: false
     onLoaded: {
@@ -135,6 +152,8 @@ BarWidget {
         busy: root.presetService.busy,
         currentOperation: root.presetService.currentOperation,
         queuedCommands: root.presetService.commandQueue.length,
+        workerReady: root.presetService.workerReady,
+        workerFailedToStart: root.presetService.workerFailedToStart,
         pendingPreflight: root.presetService.pendingPreflight,
         presetGroupCount: root.presetService.presetGroups.length,
         lastResult: root.presetService.lastResult,
