@@ -1,4 +1,5 @@
 import QtQuick
+import Quickshell
 import Quickshell.Io
 
 Item {
@@ -9,6 +10,20 @@ Item {
   readonly property string moduleName: "blakestarling.workspace-presets"
   readonly property string sourceDir: manifest && manifest.__sourceDir ? String(manifest.__sourceDir) : ""
   readonly property string backendPath: sourceDir === "" ? "" : sourceDir + "/backend/main.py"
+
+  // Omarchy watches every file under an installed plugin, so Python bytecode
+  // caches written next to the source would reload this service while its
+  // first command is still running. Relocating the cache keeps the checkout
+  // inert without paying to recompile every module on every command, which
+  // -B did.
+  readonly property string bytecodeCacheDir: {
+    var cache = String(Quickshell.env("XDG_CACHE_HOME") || "")
+    if (cache === "") {
+      var home = String(Quickshell.env("HOME") || "")
+      cache = home === "" ? String(Quickshell.cacheDir || "") : home + "/.cache"
+    }
+    return cache === "" ? "" : cache + "/omarchy-workspace-presets/pycache"
+  }
 
   property var presets: []
   property var presetGroups: []
@@ -74,10 +89,7 @@ Item {
     lastResult = null
     backend.stderrText = ""
     backend.hadStructuredError = false
-    // Omarchy watches every file under an installed plugin. Python bytecode
-    // caches would therefore reload this service while its first command is
-    // still running, so the worker must leave the checkout completely inert.
-    backend.command = ["python3", "-B", backendPath].concat(next.args)
+    backend.command = ["python3", backendPath].concat(next.args)
     busy = true
     backend.running = true
   }
@@ -299,6 +311,14 @@ Item {
     id: backend
     property string stderrText: ""
     property bool hadStructuredError: false
+
+    // Merged into the inherited environment; a bytecode cache outside the
+    // plugin tree is worth about a fifth of every command's wall time. When no
+    // cache directory can be resolved, fall back to writing none at all rather
+    // than letting Python write one into the watched checkout.
+    environment: root.bytecodeCacheDir === ""
+      ? ({ "PYTHONDONTWRITEBYTECODE": "1" })
+      : ({ "PYTHONPYCACHEPREFIX": root.bytecodeCacheDir })
 
     stdout: SplitParser {
       onRead: function(line) { root.handleLine(line) }

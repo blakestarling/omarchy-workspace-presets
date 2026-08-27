@@ -3,18 +3,30 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass
 from typing import Iterable
 
 from .errors import ValidationError
 
 
-@dataclass(frozen=True)
 class Rect:
-    x: float
-    y: float
-    w: float
-    h: float
+    """A window rectangle. Hand-written for the same import-cost reason as
+    :class:`~workspace_presets.desktop.DesktopEntry`."""
+
+    __slots__ = ("x", "y", "w", "h")
+
+    def __init__(self, x: float, y: float, w: float, h: float):
+        self.x = x
+        self.y = y
+        self.w = w
+        self.h = h
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Rect):
+            return NotImplemented
+        return (self.x, self.y, self.w, self.h) == (other.x, other.y, other.w, other.h)
+
+    def __repr__(self) -> str:
+        return f"Rect(x={self.x!r}, y={self.y!r}, w={self.w!r}, h={self.h!r})"
 
     @property
     def right(self) -> float:
@@ -95,13 +107,14 @@ def _partition(items: list[dict], axis: str) -> list[tuple[float, list[dict], li
     center_key = (lambda item: item["rect"].center_x) if axis == "x" else (lambda item: item["rect"].center_y)
     ordered = sorted(items, key=center_key)
     candidates: list[tuple[float, list[dict], list[dict], float]] = []
+    # The parent bounds are the same for every split candidate.
+    parent = _bounds(items)
     for index in range(1, len(ordered)):
         first, second = ordered[:index], ordered[index:]
         first_end = max((item["rect"].right if axis == "x" else item["rect"].bottom) for item in first)
         second_start = min((item["rect"].x if axis == "x" else item["rect"].y) for item in second)
         if first_end <= second_start + 2:
             gap = max(0.0, second_start - first_end)
-            parent = _bounds(items)
             parent_start = parent.x if axis == "x" else parent.y
             parent_extent = parent.w if axis == "x" else parent.h
             boundary = (first_end + second_start) / 2

@@ -8,10 +8,11 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from .desktop import list_entries
-from .engine import WorkspaceEngine
+if TYPE_CHECKING:
+    from .engine import Progress
+
 from .errors import WorkspacePresetsError
 from .storage import PresetStore
 
@@ -113,10 +114,36 @@ def parser() -> argparse.ArgumentParser:
     return root
 
 
+class _LazyEngine:
+    """Build the engine only once a command actually reaches it.
+
+    Importing ``engine`` pulls in ``desktop``, ``subprocess`` and ``shutil``,
+    which together cost more than the work of the read-only commands the panel
+    calls most often. ``engine`` is resolved from the module at call time so
+    the import can still be patched in tests.
+    """
+
+    __slots__ = ("_store", "_progress", "_engine")
+
+    def __init__(self, store: PresetStore, progress: "Progress"):
+        self._store = store
+        self._progress = progress
+        self._engine = None
+
+    def __getattr__(self, name: str):
+        if self._engine is None:
+            from . import engine as engine_module
+
+            self._engine = engine_module.WorkspaceEngine(
+                store=self._store, progress=self._progress
+            )
+        return getattr(self._engine, name)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     store = PresetStore()
-    engine = WorkspaceEngine(store=store, progress=progress)
+    engine = _LazyEngine(store, progress)
     try:
         if args.command == "list":
             result = store.list_summaries()
@@ -125,6 +152,8 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "capabilities":
             result = engine.capabilities()
         elif args.command == "desktop-entries":
+            from .desktop import list_entries
+
             result = list_entries()
         elif args.command == "resolve-launchers":
             result = engine.resolve_unresolved_launchers()

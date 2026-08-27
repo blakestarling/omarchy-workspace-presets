@@ -20,6 +20,7 @@ from .desktop import (
     resolve_launcher,
     scan_desktop_entries,
     scan_omarchy_panel_plugins,
+    scan_process_table,
     terminal_process_launcher,
 )
 from .errors import LaunchError, RestoreError, UnsupportedError, ValidationError
@@ -124,6 +125,9 @@ class WorkspaceEngine:
         metadata = self.hypr.layout_metadata(clients)
         entries = scan_desktop_entries()
         panel_plugins = scan_omarchy_panel_plugins()
+        # Read the process table once for the whole workspace rather than once
+        # per terminal window.
+        process_table = scan_process_table()
         stable_to_slot: dict[str, str] = {
             str(client.get("stableId")): str(uuid.uuid4()) for client in clients
         }
@@ -142,7 +146,9 @@ class WorkspaceEngine:
                 "xwayland": bool(client.get("xwayland", False)),
             }
             resolution_input = {**client, "executable": executable}
-            terminal_launch = terminal_process_launcher(client.get("pid"), executable)
+            terminal_launch = terminal_process_launcher(
+                client.get("pid"), executable, records=process_table
+            )
             if terminal_launch:
                 launcher, terminal_program = terminal_launch
                 match["terminalProgram"] = terminal_program
@@ -376,8 +382,9 @@ class WorkspaceEngine:
         context = self.hypr.active_context()
         current = self.hypr.workspace_clients(int(context["workspace"]["id"]))
         entries = scan_desktop_entries()
+        panel_plugins = scan_omarchy_panel_plugins()
         for slot in preset["snapshot"]["windows"]:
-            self._validate_runtime_launcher(slot["launcher"], entries)
+            self._validate_runtime_launcher(slot["launcher"], entries, panel_plugins)
         other_clients = [
             item
             for item in self.hypr.clients()
@@ -495,6 +502,7 @@ class WorkspaceEngine:
             )
 
         entries = scan_desktop_entries()
+        panel_plugins = scan_omarchy_panel_plugins()
         all_clients = self.hypr.clients()
         targets = []
         preset_fingerprints = []
@@ -511,7 +519,9 @@ class WorkspaceEngine:
                 ).hexdigest(),
             ])
             for slot in preset["snapshot"]["windows"]:
-                self._validate_runtime_launcher(slot["launcher"], entries)
+                self._validate_runtime_launcher(
+                    slot["launcher"], entries, panel_plugins
+                )
             workspace_slot = int(assignment["workspace"])
             workspace_id = self.group_workspace_id(workspace_slot)
             current = [
@@ -690,7 +700,9 @@ class WorkspaceEngine:
         return result
 
     @staticmethod
-    def _validate_runtime_launcher(launcher: dict, entries: dict) -> None:
+    def _validate_runtime_launcher(
+        launcher: dict, entries: dict, panel_plugins: dict | None = None
+    ) -> None:
         PresetStore._validate_launcher(launcher)
         if launcher["kind"] == "desktop":
             if launcher["desktopId"] not in entries:
@@ -709,7 +721,11 @@ class WorkspaceEngine:
             plugin_id = launcher["pluginId"]
             if not shutil.which("omarchy-shell"):
                 raise ValidationError("Required command 'omarchy-shell' is not on PATH")
-            if plugin_id not in scan_omarchy_panel_plugins():
+            # Callers validating a whole preset pass one scan in; rescanning
+            # every plugin root per window cost 7 ms a slot.
+            if panel_plugins is None:
+                panel_plugins = scan_omarchy_panel_plugins()
+            if plugin_id not in panel_plugins:
                 raise ValidationError(f"Omarchy plugin {plugin_id!r} is no longer installed")
 
     def load(

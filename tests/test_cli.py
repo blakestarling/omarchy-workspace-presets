@@ -52,7 +52,7 @@ class StartupGroupCliTests(unittest.TestCase):
             output = io.StringIO()
             with (
                 patch.dict(os.environ, environment),
-                patch("workspace_presets.cli.WorkspaceEngine", return_value=engine),
+                patch("workspace_presets.engine.WorkspaceEngine", return_value=engine),
                 redirect_stdout(output),
             ):
                 self.assertEqual(cli.main(["startup-group"]), 0)
