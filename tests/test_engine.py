@@ -530,6 +530,101 @@ class EngineRestoreTests(unittest.TestCase):
         self.assertEqual(result["discord"]["title"], "Friends - Discord")
         self.assertGreaterEqual(fake.stream.waits, 2)
 
+    def test_a_quiet_long_lived_splash_remains_provisional(self):
+        class DelayedReplacementEvents:
+            def __init__(self, fake):
+                self.fake = fake
+                self.waits = 0
+
+            def wait(self, timeout):
+                self.waits += 1
+                if self.waits == 1:
+                    time.sleep(min(timeout, 0.02))
+                    return False
+                if self.waits == 2:
+                    self.fake.spawned = [{
+                        "address": "0x3", "stableId": "3", "mapped": True,
+                        "workspace": {"id": 2, "name": "2"},
+                        "class": "discord", "initialClass": "discord",
+                        "title": "Friends - Discord", "floating": False,
+                    }]
+                    return True
+                time.sleep(timeout)
+                return False
+
+            def close(self):
+                pass
+
+        class DelayedReplacementHyprland(FakeHyprland):
+            def events(self, _kinds):
+                self.stream = DelayedReplacementEvents(self)
+                return self.stream
+
+        fake = DelayedReplacementHyprland()
+        fake.current = None
+        engine = WorkspaceEngine(hyprland=fake)
+        task = {
+            "key": "discord", "workspaceId": 1,
+            "slot": {
+                "id": "discord",
+                "match": {
+                    "class": "discord", "initialClass": "discord",
+                    "title": "Friends - Discord",
+                },
+                "launcher": {"kind": "command", "argv": ["true"]},
+            },
+        }
+
+        def spawn(_launcher):
+            fake.spawned.append({
+                "address": "0x2", "stableId": "2", "mapped": True,
+                "workspace": {"id": 1, "name": "1"},
+                "class": "discord", "initialClass": "discord",
+                "title": "Discord", "floating": False,
+            })
+
+        with patch.object(engine, "_launch", side_effect=spawn):
+            result = engine._materialize_slots(
+                [task], conflict_policy="launch-new", launch_timeout=0.2,
+                settle_timeout=0.005,
+            )
+
+        self.assertEqual(result["discord"]["stableId"], "3")
+        self.assertEqual(result["discord"]["workspace"]["id"], 1)
+        self.assertGreaterEqual(fake.stream.waits, 2)
+
+    def test_a_transient_surface_times_out_instead_of_becoming_the_slot(self):
+        fake = FakeHyprland()
+        fake.current = None
+        engine = WorkspaceEngine(hyprland=fake)
+        task = {
+            "key": "discord", "workspaceId": 1,
+            "slot": {
+                "id": "discord",
+                "match": {
+                    "class": "discord", "title": "Friends - Discord",
+                },
+                "launcher": {"kind": "command", "argv": ["true"]},
+            },
+        }
+
+        def spawn(_launcher):
+            fake.spawned.append({
+                "address": "0x2", "stableId": "2", "mapped": True,
+                "workspace": {"id": 1, "name": "1"},
+                "class": "discord", "initialClass": "discord",
+                "title": "Discord Updater", "floating": False,
+            })
+
+        with (
+            patch.object(engine, "_launch", side_effect=spawn),
+            self.assertRaisesRegex(LaunchError, "settled matching window"),
+        ):
+            engine._materialize_slots(
+                [task], conflict_policy="launch-new", launch_timeout=0.02,
+                settle_timeout=0.005,
+            )
+
     def test_launch_failure_does_not_leave_another_workspace_temporarily_floating(self):
         fake = FakeHyprland()
         fake.current = None
@@ -675,19 +770,22 @@ class EngineRestoreTests(unittest.TestCase):
             engine = WorkspaceEngine(store=store, hyprland=fake)
             engine.capabilities = lambda: {"ready": True}
             finalized = []
+            materialized = {}
 
             def materialize(tasks, **_kwargs):
-                return {
+                result = {
                     task["key"]: {
                         "stableId": str(index), "mapped": True,
                         "workspace": {
                             "id": task["workspaceId"],
                             "name": str(task["workspaceId"]),
                         },
-                        "floating": False,
+                        "floating": True,
                     }
                     for index, task in enumerate(tasks, start=10)
                 }
+                materialized.update(result)
+                return result
 
             def finalize(_snapshot, slot_windows, _context, **_kwargs):
                 workspace_id = next(iter(slot_windows.values()))["workspace"]["id"]
@@ -703,6 +801,12 @@ class EngineRestoreTests(unittest.TestCase):
                 engine.load_group(group["id"])
 
             self.assertEqual(finalized, [2, 4])
+            failed_target = [
+                window for window in materialized.values()
+                if window["workspace"]["id"] == 2
+            ]
+            self.assertTrue(failed_target)
+            self.assertTrue(all(not window["floating"] for window in failed_target))
 
     def test_duplicate_window_classes_launch_in_separate_waves(self):
         engine = WorkspaceEngine(hyprland=FakeHyprland())
@@ -795,6 +899,35 @@ class EngineRestoreTests(unittest.TestCase):
         first_tile = fake.actions.index(("float", "11", False))
         self.assertLess(layout_focus, first_tile)
         self.assertNotIn(("layout-message", "consume"), fake.actions)
+
+    def test_failed_target_cleanup_continues_after_a_window_lookup_fails(self):
+        class DisappearingWindowHyprland(FakeHyprland):
+            def find_window(self, stable_id):
+                if stable_id == "11":
+                    raise RestoreError("window disappeared")
+                return super().find_window(stable_id)
+
+        fake = DisappearingWindowHyprland()
+        fake.current = None
+        windows = {
+            "first": {"stableId": "11", "floating": True},
+            "second": {"stableId": "12", "floating": True},
+        }
+        fake.spawned.extend(windows.values())
+        snapshot = {
+            "windows": [
+                {"id": "first", "state": {"floating": False}},
+                {"id": "second", "state": {"floating": False}},
+            ],
+        }
+
+        WorkspaceEngine(hyprland=fake)._restore_saved_floating_modes(
+            snapshot, windows
+        )
+
+        self.assertTrue(windows["first"]["floating"])
+        self.assertFalse(windows["second"]["floating"])
+        self.assertIn(("float", "12", False), fake.actions)
 
     def test_omarchy_panel_launcher_uses_shell_summon_ipc(self):
         with patch("workspace_presets.engine.subprocess.Popen") as popen:

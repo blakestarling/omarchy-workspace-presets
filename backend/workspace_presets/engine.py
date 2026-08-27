@@ -41,6 +41,10 @@ VERSION_RE = re.compile(r"^(\d+)\.(\d+)")
 UNSAFE_LABEL = re.compile(r"[\x00-\x1f\x7f<>&]")
 WINDOW_SETTLE_SECONDS = 1.0
 WINDOW_STABILIZE_SECONDS = 5.0
+TRANSIENT_SURFACE_TITLE = re.compile(
+    r"\b(?:checking for updates?|updat(?:e|er|ing)|splash|loading|starting)\b",
+    re.IGNORECASE,
+)
 WINDOW_LIFECYCLE_EVENTS = {
     "openwindow", "closewindow", "windowtitle", "windowtitlev2",
     "changefloatingmode", "fullscreen",
@@ -715,7 +719,13 @@ class WorkspaceEngine:
                 except Exception as exc:
                     # Every target was launched before finalization begins. A
                     # failure in one workspace must not prevent independent
-                    # targets from rebuilding their saved layouts.
+                    # targets from rebuilding their saved layouts. Restore
+                    # this target's saved floating modes even if activation
+                    # failed before _finalize_snapshot installed its own
+                    # cleanup guard.
+                    self._restore_saved_floating_modes(
+                        target["snapshot"], target["slotWindows"]
+                    )
                     finalize_failures.append(exc)
                     continue
                 result = {
@@ -916,6 +926,40 @@ class WorkspaceEngine:
                 int(window.get("fullscreen", 0)),
             )
 
+        def surface_is_provisional(window: dict, slot: dict) -> bool:
+            """Identify launch-time updater/splash surfaces that share an app class.
+
+            Class identity is sufficient to claim a newly mapped window, but
+            it is not proof that the application reached its saved surface.
+            Electron applications commonly map a quiet, long-lived splash
+            whose class is identical to the eventual main window. An obvious
+            transient title stays provisional. So does a title that is merely
+            the application class when the captured surface had a distinct
+            title. The real window may have dynamic content, so an exact saved
+            title match is deliberately not required.
+            """
+            title = str(window.get("title", "")).strip()
+            if not title or TRANSIENT_SURFACE_TITLE.search(title):
+                return True
+            match = slot.get("match", {})
+            saved_title = str(match.get("title", "")).strip().casefold()
+            identity_titles = {
+                str(value).strip().casefold()
+                for value in (
+                    window.get("class", ""),
+                    window.get("initialClass", ""),
+                    match.get("class", ""),
+                    match.get("initialClass", ""),
+                )
+                if str(value).strip()
+            }
+            folded_title = title.casefold()
+            return bool(
+                saved_title
+                and folded_title in identity_titles
+                and folded_title != saved_title
+            )
+
         settle_timeout = max(0.0, float(settle_timeout))
         windows: dict[str, dict] = {}
         pending = []
@@ -963,6 +1007,7 @@ class WorkspaceEngine:
             task_by_key = dict(unresolved)
             assigned_ids: set[str] = set()
             signatures: dict[str, tuple] = {}
+            provisional: set[str] = set()
             launch_deadline = time.monotonic() + launch_timeout
             settled_since: float | None = None
             settle_deadline: float | None = None
@@ -974,7 +1019,7 @@ class WorkspaceEngine:
 
                 while True:
                     now = time.monotonic()
-                    if unresolved:
+                    if unresolved or provisional:
                         if now >= launch_deadline:
                             break
                     elif settle_deadline is not None and now >= settle_deadline:
@@ -1003,6 +1048,7 @@ class WorkspaceEngine:
                             windows.pop(key, None)
                             assigned_ids.discard(stable_id)
                             signatures.pop(key, None)
+                            provisional.discard(key)
                             unresolved[key] = task
                             changed = True
                         else:
@@ -1012,30 +1058,62 @@ class WorkspaceEngine:
                                 signatures[key] = signature
                                 changed = True
 
+                            was_provisional = key in provisional
+                            is_provisional = surface_is_provisional(
+                                current, task["slot"]
+                            )
+                            if is_provisional:
+                                provisional.add(key)
+                            else:
+                                provisional.discard(key)
+                            if was_provisional != is_provisional:
+                                changed = True
+
+                    matchable = dict(unresolved)
+                    matchable.update({
+                        key: task_by_key[key] for key in provisional
+                    })
                     for candidate in current_clients:
                         stable_id = str(candidate.get("stableId", candidate.get("address", "")))
                         if stable_id in before or stable_id in assigned_ids:
                             continue
-                        for key, task in unresolved.items():
+                        for key, task in matchable.items():
                             score = window_match_score(candidate, task["slot"]["match"])
                             if score >= 100:
-                                candidates.append((score, stable_id, key, candidate))
-                    for _score, stable_id, key, candidate in sorted(
-                        candidates, key=lambda item: (item[0], item[1], item[2]), reverse=True
+                                ready = not surface_is_provisional(
+                                    candidate, task["slot"]
+                                )
+                                candidates.append((ready, score, stable_id, key, candidate))
+                    for _ready, _score, stable_id, key, candidate in sorted(
+                        candidates,
+                        key=lambda item: (item[0], item[1], item[2], item[3]),
+                        reverse=True,
                     ):
-                        if key not in unresolved or stable_id in assigned_ids:
+                        if (
+                            key not in unresolved and key not in provisional
+                        ) or stable_id in assigned_ids:
                             continue
-                        task = unresolved.pop(key)
+                        task = unresolved.pop(key, task_by_key[key])
+                        previous = windows.get(key)
+                        if previous is not None:
+                            previous_id = str(
+                                previous.get("stableId", previous.get("address", ""))
+                            )
+                            assigned_ids.discard(previous_id)
                         assigned_ids.add(stable_id)
                         self.hypr.move_to_workspace(candidate, task["workspaceId"])
                         windows[key] = self.hypr.find_window(stable_id) or candidate
                         signatures[key] = surface_signature(windows[key])
+                        if surface_is_provisional(windows[key], task["slot"]):
+                            provisional.add(key)
+                        else:
+                            provisional.discard(key)
                         if key not in launched:
                             launched.append(key)
                         changed = True
 
                     now = time.monotonic()
-                    if unresolved:
+                    if unresolved or provisional:
                         settled_since = None
                         settle_deadline = None
                         if now >= launch_deadline:
@@ -1069,8 +1147,10 @@ class WorkspaceEngine:
                 if events is not None:
                     events.close()
 
-            if unresolved:
-                task = next(iter(unresolved.values()))
+            incomplete = dict(unresolved)
+            incomplete.update({key: task_by_key[key] for key in provisional})
+            if incomplete:
+                task = next(iter(incomplete.values()))
                 slot = task["slot"]
                 label = safe_label(
                     slot.get("match", {}).get("class") or slot.get("match", {}).get("title")
@@ -1079,12 +1159,14 @@ class WorkspaceEngine:
                     "slotId": slot["id"],
                     "launcher": slot["launcher"],
                     "launchedSlots": launched,
-                    "missingSlotIds": [item["slot"]["id"] for item in unresolved.values()],
+                    "missingSlotIds": [
+                        item["slot"]["id"] for item in incomplete.values()
+                    ],
                 }
                 if task.get("conflict"):
                     details["existingConflict"] = task["conflict"]
                 raise LaunchError(
-                    f"{label} did not create a matching window before the timeout",
+                    f"{label} did not create a settled matching window before the timeout",
                     details=details,
                 )
             if preserve_workspace_id and preserve_workspace_id >= 1:
@@ -1187,17 +1269,31 @@ class WorkspaceEngine:
             # Restoring the exact topology may fail if a client disappears.
             # Never leave the temporary replay state behind while surfacing the
             # original error.
-            for slot in slots:
-                window = slot_windows[slot["id"]]
-                stable_id = str(window.get("stableId", ""))
-                current = self.hypr.find_window(stable_id) or window
-                try:
-                    self.hypr.set_floating(
-                        current, bool(slot.get("state", {}).get("floating", False))
-                    )
-                except Exception:
-                    pass
+            self._restore_saved_floating_modes(snapshot, slot_windows)
             raise
+
+    def _restore_saved_floating_modes(
+        self, snapshot: dict, slot_windows: dict[str, dict]
+    ) -> None:
+        """Best-effort cleanup for a failed target restore.
+
+        Each lookup and mutation is isolated: one disappeared or invalid
+        client must not prevent every remaining window from leaving the
+        temporary replay state.
+        """
+        for slot in snapshot["windows"]:
+            window = slot_windows.get(slot["id"])
+            if window is None:
+                continue
+            try:
+                stable_id = str(window.get("stableId", ""))
+                current = self.hypr.find_window(stable_id) if stable_id else None
+                self.hypr.set_floating(
+                    current or window,
+                    bool(slot.get("state", {}).get("floating", False)),
+                )
+            except Exception:
+                pass
 
     @staticmethod
     def _launcher_command(launcher: dict) -> list[str]:
