@@ -116,6 +116,43 @@ class Hyprland:
         value = self.query("version")
         return value if isinstance(value, dict) else {}
 
+    @staticmethod
+    def _monitor_geometry(monitors: list[dict]) -> list[tuple]:
+        return sorted(
+            (
+                str(monitor.get("name", "")),
+                tuple(monitor.get("reserved", [0, 0, 0, 0])),
+                monitor.get("width"),
+                monitor.get("height"),
+                monitor.get("scale"),
+                monitor.get("transform"),
+            )
+            for monitor in monitors
+        )
+
+    def await_stable_monitors(
+        self, *, timeout: float = 5.0, settle: float = 0.2
+    ) -> bool:
+        """Wait until two consecutive reads report the same monitor geometry.
+
+        Saved geometry is normalized against the work area, which is the
+        monitor minus whatever the bar has reserved. This plugin is hosted by
+        that bar, so at login its own reservation may not have landed when the
+        startup group runs, and every floating window would then be placed
+        against a work area that never existed. Stability is the test rather
+        than a non-zero reservation, because a session with no bar at all is
+        legitimate and must not be made to wait for the timeout.
+        """
+        deadline = time.monotonic() + timeout
+        previous = self._monitor_geometry(self.monitors())
+        while time.monotonic() < deadline:
+            time.sleep(settle)
+            current = self._monitor_geometry(self.monitors())
+            if current == previous:
+                return True
+            previous = current
+        return False
+
     def active_context(self) -> dict:
         workspace = self.active_workspace()
         if int(workspace.get("id", 0)) < 0 or str(workspace.get("name", "")).startswith("special:"):

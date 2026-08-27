@@ -56,10 +56,14 @@ Item {
   function initialize() {
     if (initialized || backendPath === "") return
     initialized = true
-    enqueue(["capabilities"], "capabilities")
+    // The startup launch is the only queued command anyone is waiting on at
+    // login, so nothing that merely fills a closed panel runs ahead of it.
+    // resolve-launchers stays first because it can repair a draft the startup
+    // group depends on.
     enqueue(["resolve-launchers"], "resolve-launchers")
-    enqueue(["state"], "state")
     enqueue(["startup-group"], "startup-group")
+    enqueue(["capabilities"], "capabilities")
+    enqueue(["state"], "state")
   }
 
   onManifestChanged: Qt.callLater(root.initialize)
@@ -138,7 +142,9 @@ Item {
   }
 
   function refresh() { enqueue(["state"], "state") }
-  function refreshCapabilities() { enqueue(["capabilities"], "capabilities") }
+  function refreshCapabilities() {
+    enqueue(["capabilities", "--refresh"], "capabilities")
+  }
   function loadDetails(presetId) { enqueue(["details", "--id", String(presetId)], "details") }
   function loadDesktopEntries() {
     if (desktopEntries.length === 0) enqueue(["desktop-entries"], "desktop-entries")

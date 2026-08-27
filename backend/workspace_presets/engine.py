@@ -113,6 +113,13 @@ class WorkspaceEngine:
             "dataPath": str(self.store.path),
         }
 
+    def await_stable_workarea(
+        self, *, timeout: float = 5.0, settle: float = 0.2
+    ) -> bool:
+        """Hold the startup launch until monitor geometry stops changing."""
+        self.progress("startup", "Waiting for the desktop to settle", None)
+        return self.hypr.await_stable_monitors(timeout=timeout, settle=settle)
+
     @staticmethod
     def _at_least(value: str, major: int, minor: int) -> bool:
         match = VERSION_RE.search(value)

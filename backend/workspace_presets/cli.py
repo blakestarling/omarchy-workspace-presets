@@ -40,7 +40,10 @@ def parser() -> argparse.ArgumentParser:
     commands.add_parser("list")
     commands.add_parser("groups")
     commands.add_parser("state")
-    commands.add_parser("capabilities")
+    capabilities_command = commands.add_parser("capabilities")
+    # The panel rechecks a system it just reported as unsupported, so that
+    # request must re-probe rather than reuse what a startup launch found.
+    capabilities_command.add_argument("--refresh", action="store_true")
     commands.add_parser("desktop-entries")
     commands.add_parser("resolve-launchers")
 
@@ -97,7 +100,10 @@ def parser() -> argparse.ArgumentParser:
     group_load.add_argument("--close-timeout", type=float, default=8.0)
     group_load.add_argument("--launch-timeout", type=float, default=12.0)
 
-    commands.add_parser("startup-group")
+    startup = commands.add_parser("startup-group")
+    # Applications launched at login are slower than the same applications
+    # launched from a settled desktop.
+    startup.add_argument("--launch-timeout", type=float, default=30.0)
 
     launcher = commands.add_parser("set-launcher")
     launcher.add_argument("--id", required=True)
@@ -125,6 +131,14 @@ def parser() -> argparse.ArgumentParser:
     serve_command = commands.add_parser("serve")
     serve_command.add_argument("--idle-timeout", type=float, default=120.0)
     return root
+
+
+def _release_startup_marker(marker: Path) -> None:
+    """Allow another attempt this session after a failure that did nothing."""
+    try:
+        marker.unlink()
+    except OSError:
+        pass
 
 
 def serve(idle_timeout: float) -> int:
@@ -222,9 +236,7 @@ def dispatch(args: argparse.Namespace, store: PresetStore, engine: Any) -> objec
             "groups": store.list_group_summaries(),
         }
     elif args.command == "capabilities":
-        # The panel asks for this explicitly to recheck a system it just
-        # reported as unsupported, so never answer it from a cache.
-        result = engine.capabilities(refresh=True)
+        result = engine.capabilities(refresh=args.refresh)
     elif args.command == "desktop-entries":
         from .desktop import list_entries
 
@@ -316,18 +328,38 @@ def dispatch(args: argparse.Namespace, store: PresetStore, engine: Any) -> objec
             group_id = settings["startupGroupId"]
             if group_id is None:
                 result = {"launched": False, "reason": "no-startup-group"}
-            elif settings["confirmStartupLaunch"]:
-                check = engine.preflight_group(group_id)
-                check["startupConfirmation"] = True
-                result = {
-                    "launched": False,
-                    "reason": "confirmation-required",
-                    "confirmationRequired": True,
-                    "preflight": check,
-                }
             else:
-                loaded = engine.load_group(group_id)
-                result = {"launched": True, "group": loaded}
+                # The marker is taken before the attempt so two services
+                # racing at login cannot both launch. But a session that was
+                # not ready yet - Hyprland not answering, uwsm-app not on PATH
+                # - would then keep the marker and silently suppress the
+                # startup group for the whole session even though nothing had
+                # happened. Preflight closes and launches nothing, so a
+                # failure inside it is safe to retry and releases the marker.
+                settled = engine.await_stable_workarea()
+                try:
+                    check = engine.preflight_group(group_id)
+                except WorkspacePresetsError:
+                    _release_startup_marker(marker)
+                    raise
+                if settings["confirmStartupLaunch"]:
+                    check["startupConfirmation"] = True
+                    result = {
+                        "launched": False,
+                        "reason": "confirmation-required",
+                        "confirmationRequired": True,
+                        "preflight": check,
+                    }
+                else:
+                    # Applications launched at login start against a cold page
+                    # cache while the rest of the session is still coming up,
+                    # so the interactive timeout is the wrong one here: a miss
+                    # is reported as a failed restore, never a partial one.
+                    loaded = engine.load_group(
+                        group_id, launch_timeout=args.launch_timeout
+                    )
+                    result = {"launched": True, "group": loaded}
+                result["workareaSettled"] = bool(settled)
     elif args.command == "set-launcher":
         if args.desktop_id:
             launcher = {"kind": "desktop", "desktopId": args.desktop_id}
