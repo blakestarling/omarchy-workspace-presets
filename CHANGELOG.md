@@ -2,6 +2,12 @@
 
 All notable changes to Workspace Presets are documented here.
 
+## Unreleased
+
+- Keep newly matched windows provisional while their compositor-visible surface state is still changing, and rebind a slot when an updater or splash is replaced by the application's real window.
+- Defer temporary floating until each group workspace is actively being finalized, restore saved floating modes if finalization fails, and continue finalizing independent targets before reporting the failure.
+- Synchronize a group target through an exact window before reading its active context, closing the remaining focus-publication race during cold application startup.
+
 ## 1.9.0 - 2026-08-26
 
 Performance work across the backend, the shell service, and the login path. Behaviour is unchanged: `list`, `groups`, `details`, `capabilities`, `desktop-entries`, `resolve-launchers` and `preflight` all produce byte-identical output, including the preflight confirmation token.

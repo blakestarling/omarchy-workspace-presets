@@ -39,6 +39,12 @@ from .storage import PresetStore, utc_now
 Progress = Callable[[str, str, dict | None], None]
 VERSION_RE = re.compile(r"^(\d+)\.(\d+)")
 UNSAFE_LABEL = re.compile(r"[\x00-\x1f\x7f<>&]")
+WINDOW_SETTLE_SECONDS = 1.0
+WINDOW_STABILIZE_SECONDS = 5.0
+WINDOW_LIFECYCLE_EVENTS = {
+    "openwindow", "closewindow", "windowtitle", "windowtitlev2",
+    "changefloatingmode", "fullscreen",
+}
 
 
 def safe_label(value: object, *, fallback: str = "window", limit: int = 60) -> str:
@@ -687,19 +693,31 @@ class WorkspaceEngine:
             targets[task["targetIndex"]]["slotWindows"][task["slot"]["id"]] = materialized[task["key"]]
 
         results = []
+        finalize_failures: list[Exception] = []
         try:
-            for target in targets:
+            for finalize_index, target in enumerate(targets, start=1):
                 workspace_id = int(target["workspace"]["id"])
                 workspace_slot = int(target["workspace"].get("slot", workspace_id))
                 self.progress(
                     "layout", f"Finalizing {target['preset']['name']} on workspace {workspace_slot}",
-                    {"current": len(results) + 1, "total": len(check["targets"])},
+                    {"current": finalize_index, "total": len(check["targets"])},
                 )
-                self.hypr.focus_workspace(workspace_id)
-                context = self.hypr.active_context()
-                if int(context["workspace"]["id"]) != workspace_id:
-                    raise RestoreError(f"Could not activate workspace {workspace_id}")
-                self._finalize_snapshot(target["snapshot"], target["slotWindows"], context)
+                order = target_order(target["snapshot"]["layout"])
+                anchor = target["slotWindows"][order[0]]
+                try:
+                    context = self._activate_workspace_for_layout(
+                        workspace_id, anchor
+                    )
+                    self._finalize_snapshot(
+                        target["snapshot"], target["slotWindows"], context,
+                        focus_ready=True,
+                    )
+                except Exception as exc:
+                    # Every target was launched before finalization begins. A
+                    # failure in one workspace must not prevent independent
+                    # targets from rebuilding their saved layouts.
+                    finalize_failures.append(exc)
+                    continue
                 result = {
                     "presetId": target["preset"]["id"],
                     "name": target["preset"]["name"],
@@ -715,6 +733,8 @@ class WorkspaceEngine:
                     original_window = self.hypr.find_window(original_window_id)
                     if original_window:
                         self.hypr.focus(original_window)
+        if finalize_failures:
+            raise finalize_failures[0]
         result = {
             "groupId": group_id, "name": check["group"]["name"],
             "workspaceCount": len(results), "results": results,
@@ -883,7 +903,20 @@ class WorkspaceEngine:
         launch_timeout: float,
         preserve_workspace_id: int | None = None,
         preserve_window_id: str = "",
+        settle_timeout: float = WINDOW_SETTLE_SECONDS,
     ) -> dict[str, dict]:
+        def surface_signature(window: dict) -> tuple:
+            return (
+                str(window.get("class", "")),
+                str(window.get("initialClass", "")),
+                str(window.get("title", "")),
+                str(window.get("initialTitle", "")),
+                bool(window.get("mapped", True)),
+                bool(window.get("floating", False)),
+                int(window.get("fullscreen", 0)),
+            )
+
+        settle_timeout = max(0.0, float(settle_timeout))
         windows: dict[str, dict] = {}
         pending = []
         used_existing: set[str] = set()
@@ -898,7 +931,6 @@ class WorkspaceEngine:
                 stable_id = str(window.get("stableId", ""))
                 used_existing.add(stable_id)
                 self.hypr.move_to_workspace(window, task["workspaceId"])
-                self.hypr.set_floating(window, True)
                 windows[task["key"]] = self.hypr.find_window(stable_id) or window
             else:
                 pending.append(task)
@@ -923,21 +955,64 @@ class WorkspaceEngine:
                 f"Opening {', '.join(labels)}",
                 {"wave": wave_index, "waves": len(waves), "current": len(launched), "total": total},
             )
-            # Subscribed before anything is launched so a window that maps
-            # immediately cannot be missed.
-            events = self.hypr.events({"openwindow"})
+            # Subscribed before anything is launched so a window that maps or
+            # is replaced immediately cannot be missed. Some applications map
+            # an updater or splash with the same class as their real window.
+            events = self.hypr.events(WINDOW_LIFECYCLE_EVENTS)
+            unresolved = {task["key"]: task for task in wave}
+            task_by_key = dict(unresolved)
+            assigned_ids: set[str] = set()
+            signatures: dict[str, tuple] = {}
+            launch_deadline = time.monotonic() + launch_timeout
+            settled_since: float | None = None
+            settle_deadline: float | None = None
             try:
                 for task in wave:
                     self._launch_on_workspace(
                         task["slot"]["launcher"], task["workspaceId"]
                     )
 
-                unresolved = {task["key"]: task for task in wave}
-                assigned_ids: set[str] = set()
-                deadline = time.monotonic() + launch_timeout
-                while unresolved and time.monotonic() < deadline:
+                while True:
+                    now = time.monotonic()
+                    if unresolved:
+                        if now >= launch_deadline:
+                            break
+                    elif settle_deadline is not None and now >= settle_deadline:
+                        break
+
+                    changed = False
                     candidates = []
-                    for candidate in self.hypr.clients():
+                    current_clients = self.hypr.clients()
+                    current_by_id = {
+                        str(item.get("stableId", item.get("address", ""))): item
+                        for item in current_clients
+                        if item.get("mapped", True)
+                    }
+                    for key, task in task_by_key.items():
+                        assigned = windows.get(key)
+                        if assigned is None:
+                            continue
+                        stable_id = str(
+                            assigned.get("stableId", assigned.get("address", ""))
+                        )
+                        current = current_by_id.get(stable_id)
+                        if (
+                            current is None
+                            or window_match_score(current, task["slot"]["match"]) < 100
+                        ):
+                            windows.pop(key, None)
+                            assigned_ids.discard(stable_id)
+                            signatures.pop(key, None)
+                            unresolved[key] = task
+                            changed = True
+                        else:
+                            windows[key] = current
+                            signature = surface_signature(current)
+                            if signatures.get(key) != signature:
+                                signatures[key] = signature
+                                changed = True
+
+                    for candidate in current_clients:
                         stable_id = str(candidate.get("stableId", candidate.get("address", "")))
                         if stable_id in before or stable_id in assigned_ids:
                             continue
@@ -953,15 +1028,37 @@ class WorkspaceEngine:
                         task = unresolved.pop(key)
                         assigned_ids.add(stable_id)
                         self.hypr.move_to_workspace(candidate, task["workspaceId"])
-                        self.hypr.set_floating(candidate, True)
                         windows[key] = self.hypr.find_window(stable_id) or candidate
-                        launched.append(key)
-                    if not unresolved:
-                        break
-                    # An application maps roughly 65 ms after launching, where
-                    # this loop used to wait out a fixed 120 ms before looking.
-                    # The cap keeps a missed event no worse than that.
-                    left = min(0.12, deadline - time.monotonic())
+                        signatures[key] = surface_signature(windows[key])
+                        if key not in launched:
+                            launched.append(key)
+                        changed = True
+
+                    now = time.monotonic()
+                    if unresolved:
+                        settled_since = None
+                        settle_deadline = None
+                        if now >= launch_deadline:
+                            break
+                        wait_deadline = launch_deadline
+                    else:
+                        if settle_deadline is None:
+                            # Most windows complete after one quiet second. A
+                            # changing Electron/Chromium surface gets a bounded
+                            # grace period without consuming the whole
+                            # application-launch deadline.
+                            settle_deadline = min(
+                                launch_deadline + settle_timeout,
+                                now + WINDOW_STABILIZE_SECONDS,
+                            )
+                        if changed or settled_since is None:
+                            settled_since = now
+                        if now - settled_since >= settle_timeout:
+                            break
+                        wait_deadline = min(
+                            settled_since + settle_timeout, settle_deadline
+                        )
+                    left = min(0.12, wait_deadline - now)
                     if left <= 0:
                         break
                     if events is None:
@@ -998,8 +1095,35 @@ class WorkspaceEngine:
                         self.hypr.focus(preserved)
         return windows
 
+    def _activate_workspace_for_layout(
+        self, workspace_id: int, anchor: dict
+    ) -> dict:
+        """Activate a group target through one of its exact saved windows.
+
+        Hyprland can acknowledge a workspace dispatcher one frame before its
+        active workspace and layout focus are published. Late application
+        windows can widen that gap or steal focus in between. The exact-window
+        barrier is therefore part of activation, before reading target context.
+        """
+        failure: Exception = RestoreError(
+            f"Could not activate workspace {workspace_id}"
+        )
+        for _attempt in range(2):
+            try:
+                self.hypr.focus_workspace(workspace_id)
+                self.hypr.focus_for_layout(anchor)
+                context = self.hypr.active_context()
+            except Exception as exc:
+                failure = exc
+                continue
+            if int(context["workspace"]["id"]) == int(workspace_id):
+                return context
+            failure = RestoreError(f"Could not activate workspace {workspace_id}")
+        raise failure
+
     def _finalize_snapshot(
-        self, snapshot: dict, slot_windows: dict[str, dict], context: dict
+        self, snapshot: dict, slot_windows: dict[str, dict], context: dict,
+        *, focus_ready: bool = False,
     ) -> None:
         slots = snapshot["windows"]
         self.progress("layout", "Rebuilding groups and tiling topology", None)
@@ -1010,42 +1134,70 @@ class WorkspaceEngine:
         # any grouping, float->tile transition, or layout message. Checking
         # only the active workspace ID is not a sufficient compositor barrier.
         order = target_order(snapshot["layout"])
-        if order:
+        if order and not focus_ready:
             self.hypr.focus_for_layout(slot_windows[order[0]])
 
-        for group in snapshot.get("groups", []):
-            members = [slot_windows[slot_id] for slot_id in group["members"]]
-            representative = slot_windows[group["representativeSlotId"]]
-            self.hypr.create_group(
-                representative,
-                members,
-                current_index=int(group.get("currentIndex", 1)),
-                locked=bool(group.get("locked", False)),
-            )
+        try:
+            # Keep launch-time windows in their compositor-native tiled state.
+            # Detach only this target, after its exact focus barrier, so a slow
+            # or failed application cannot strand every other group workspace
+            # in the temporary floating state used for deterministic replay.
+            for slot in slots:
+                self.hypr.set_floating(slot_windows[slot["id"]], True)
 
-        self._restore_tiling(
-            snapshot["layout"], slot_windows, context.get("workarea", {})
-        )
-        source_workarea = snapshot.get("source", {}).get("workarea", {})
-        for slot in slots:
-            window = slot_windows[slot["id"]]
-            if slot.get("state", {}).get("floating", False):
-                self.hypr.set_floating(window, True)
-                geometry = denormalized_geometry(slot["geometry"], source_workarea, context["workarea"])
-                self.hypr.move_resize(window, geometry)
+            for group in snapshot.get("groups", []):
+                members = [slot_windows[slot_id] for slot_id in group["members"]]
+                representative = slot_windows[group["representativeSlotId"]]
+                self.hypr.create_group(
+                    representative,
+                    members,
+                    current_index=int(group.get("currentIndex", 1)),
+                    locked=bool(group.get("locked", False)),
+                )
 
-        self.progress("state", "Restoring window state and focus", None)
-        # Pin/fullscreen changes can hide or redirect focus, so apply them last.
-        for slot in slots:
-            self.hypr.apply_window_state(slot_windows[slot["id"]], slot.get("state", {}))
-        focus_id = snapshot.get("finalFocusSlotId")
-        if snapshot["layout"].get("name") == "scrolling":
-            focus_window = slot_windows.get(focus_id)
-            self.hypr.restore_scrolling_view(
-                snapshot["layout"], slot_windows, focus_window, context.get("workarea", {})
+            self._restore_tiling(
+                snapshot["layout"], slot_windows, context.get("workarea", {})
             )
-        elif focus_id in slot_windows:
-            self.hypr.focus(slot_windows[focus_id])
+            source_workarea = snapshot.get("source", {}).get("workarea", {})
+            for slot in slots:
+                window = slot_windows[slot["id"]]
+                if slot.get("state", {}).get("floating", False):
+                    self.hypr.set_floating(window, True)
+                    geometry = denormalized_geometry(
+                        slot["geometry"], source_workarea, context["workarea"]
+                    )
+                    self.hypr.move_resize(window, geometry)
+
+            self.progress("state", "Restoring window state and focus", None)
+            # Pin/fullscreen changes can hide or redirect focus, so apply them last.
+            for slot in slots:
+                self.hypr.apply_window_state(
+                    slot_windows[slot["id"]], slot.get("state", {})
+                )
+            focus_id = snapshot.get("finalFocusSlotId")
+            if snapshot["layout"].get("name") == "scrolling":
+                focus_window = slot_windows.get(focus_id)
+                self.hypr.restore_scrolling_view(
+                    snapshot["layout"], slot_windows, focus_window,
+                    context.get("workarea", {}),
+                )
+            elif focus_id in slot_windows:
+                self.hypr.focus(slot_windows[focus_id])
+        except Exception:
+            # Restoring the exact topology may fail if a client disappears.
+            # Never leave the temporary replay state behind while surfacing the
+            # original error.
+            for slot in slots:
+                window = slot_windows[slot["id"]]
+                stable_id = str(window.get("stableId", ""))
+                current = self.hypr.find_window(stable_id) or window
+                try:
+                    self.hypr.set_floating(
+                        current, bool(slot.get("state", {}).get("floating", False))
+                    )
+                except Exception:
+                    pass
+            raise
 
     @staticmethod
     def _launcher_command(launcher: dict) -> list[str]:

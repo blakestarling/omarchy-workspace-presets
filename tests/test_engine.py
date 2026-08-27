@@ -1,10 +1,12 @@
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from workspace_presets.desktop import OmarchyPanelPlugin
 from workspace_presets.engine import WorkspaceEngine
+from workspace_presets.errors import LaunchError, RestoreError
 from workspace_presets.storage import PresetStore
 
 
@@ -40,7 +42,7 @@ class FakeHyprland:
     def close(self, window): self.current = None; self.actions.append(("close", window["stableId"]))
     def wait_until_closed(self, stable_ids, timeout): return set()
     def set_workspace_layout(self, name, layout): self.actions.append(("layout", name, layout["name"]))
-    def move_to_workspace(self, window, name): window["workspace"] = {"id": 1, "name": name}
+    def move_to_workspace(self, window, name): window["workspace"] = {"id": int(name), "name": str(name)}
     def set_floating(self, window, value): window["floating"] = value; self.actions.append(("float", window["stableId"], value))
     def find_window(self, stable_id): return next((item for item in self.clients() if item["stableId"] == stable_id), None)
     def create_group(self, *args, **kwargs): self.actions.append(("group",))
@@ -418,6 +420,289 @@ class EngineRestoreTests(unittest.TestCase):
         self.assertEqual(launches, [1, 2])
         self.assertEqual(set(result), {"1", "2"})
         self.assertEqual(len(engine._launch_waves(tasks)), 1)
+
+    def test_a_provisional_window_is_rebound_when_the_app_replaces_it(self):
+        class ReplacementEvents:
+            def __init__(self, fake):
+                self.fake = fake
+                self.replaced = False
+
+            def wait(self, timeout):
+                if not self.replaced:
+                    self.replaced = True
+                    self.fake.spawned = [{
+                        "address": "0x3", "stableId": "3", "mapped": True,
+                        "workspace": {"id": 1, "name": "1"},
+                        "class": "discord", "initialClass": "discord",
+                        "title": "Friends - Discord", "floating": False,
+                    }]
+                    return True
+                time.sleep(timeout)
+                return False
+
+            def close(self):
+                pass
+
+        class ReplacementHyprland(FakeHyprland):
+            def events(self, kinds):
+                self.subscribed = kinds
+                return ReplacementEvents(self)
+
+        fake = ReplacementHyprland()
+        fake.current = None
+        engine = WorkspaceEngine(hyprland=fake)
+        task = {
+            "key": "discord", "workspaceId": 1,
+            "slot": {
+                "id": "discord",
+                "match": {"class": "discord", "initialClass": "discord"},
+                "launcher": {"kind": "command", "argv": ["true"]},
+            },
+        }
+
+        def spawn(_launcher):
+            fake.spawned.append({
+                "address": "0x2", "stableId": "2", "mapped": True,
+                "workspace": {"id": 1, "name": "1"},
+                "class": "discord", "initialClass": "discord",
+                "title": "Discord Updater", "floating": False,
+            })
+
+        with patch.object(engine, "_launch", side_effect=spawn):
+            result = engine._materialize_slots(
+                [task], conflict_policy="launch-new", launch_timeout=0.2,
+                settle_timeout=0.01,
+            )
+
+        self.assertEqual(result["discord"]["stableId"], "3")
+        self.assertEqual(fake.subscribed, {
+            "openwindow", "closewindow", "windowtitle", "windowtitlev2",
+            "changefloatingmode", "fullscreen",
+        })
+
+    def test_a_provisional_window_waits_for_late_surface_updates(self):
+        class UpdatingEvents:
+            def __init__(self, fake):
+                self.fake = fake
+                self.waits = 0
+
+            def wait(self, timeout):
+                self.waits += 1
+                if self.waits == 1:
+                    self.fake.spawned[0]["title"] = "Friends - Discord"
+                    return True
+                time.sleep(timeout)
+                return False
+
+            def close(self):
+                pass
+
+        class UpdatingHyprland(FakeHyprland):
+            def events(self, _kinds):
+                self.stream = UpdatingEvents(self)
+                return self.stream
+
+        fake = UpdatingHyprland()
+        fake.current = None
+        engine = WorkspaceEngine(hyprland=fake)
+        task = {
+            "key": "discord", "workspaceId": 1,
+            "slot": {
+                "id": "discord", "match": {"class": "discord"},
+                "launcher": {"kind": "command", "argv": ["true"]},
+            },
+        }
+
+        def spawn(_launcher):
+            fake.spawned.append({
+                "address": "0x2", "stableId": "2", "mapped": True,
+                "workspace": {"id": 1, "name": "1"},
+                "class": "discord", "initialClass": "discord",
+                "title": "Discord", "floating": False,
+            })
+
+        with patch.object(engine, "_launch", side_effect=spawn):
+            result = engine._materialize_slots(
+                [task], conflict_policy="launch-new", launch_timeout=0.2,
+                settle_timeout=0.01,
+            )
+
+        self.assertEqual(result["discord"]["title"], "Friends - Discord")
+        self.assertGreaterEqual(fake.stream.waits, 2)
+
+    def test_launch_failure_does_not_leave_another_workspace_temporarily_floating(self):
+        fake = FakeHyprland()
+        fake.current = None
+        engine = WorkspaceEngine(hyprland=fake)
+        tasks = [
+            {
+                "key": "terminal", "workspaceId": 2,
+                "slot": {
+                    "id": "terminal", "match": {"class": "foot"},
+                    "launcher": {"kind": "command", "argv": ["true"]},
+                },
+            },
+            {
+                "key": "discord", "workspaceId": 1,
+                "slot": {
+                    "id": "discord", "match": {"class": "discord"},
+                    "launcher": {"kind": "command", "argv": ["true"]},
+                },
+            },
+        ]
+
+        def spawn(launcher):
+            if not fake.spawned:
+                fake.spawned.append({
+                    "address": "0x2", "stableId": "2", "mapped": True,
+                    "workspace": {"id": 2, "name": "2"},
+                    "class": "foot", "initialClass": "foot",
+                    "title": "Terminal", "floating": False,
+                })
+
+        with (
+            patch.object(engine, "_launch", side_effect=spawn),
+            self.assertRaises(LaunchError),
+        ):
+            engine._materialize_slots(
+                tasks, conflict_policy="launch-new", launch_timeout=0.02,
+                settle_timeout=0.01,
+            )
+
+        self.assertFalse(fake.find_window("2")["floating"])
+        self.assertNotIn(("float", "2", True), fake.actions)
+
+    def test_target_activation_waits_for_its_window_before_reading_context(self):
+        class DelayedWorkspaceHyprland(FakeHyprland):
+            def __init__(self):
+                super().__init__()
+                self.active_id = 1
+
+            def active_context(self):
+                context = super().active_context()
+                context["workspace"] = {
+                    "id": self.active_id, "name": str(self.active_id),
+                    "tiledLayout": "monocle",
+                }
+                return context
+
+            def focus_workspace(self, workspace):
+                # The dispatcher returned, but Hyprland has not published the
+                # workspace change yet.
+                self.actions.append(("focus-workspace", str(workspace)))
+
+            def focus_for_layout(self, window):
+                self.active_id = int(window["workspace"]["id"])
+                super().focus_for_layout(window)
+
+        fake = DelayedWorkspaceHyprland()
+        engine = WorkspaceEngine(hyprland=fake)
+        target = {
+            "stableId": "2", "workspace": {"id": 2, "name": "2"},
+            "floating": False,
+        }
+
+        context = engine._activate_workspace_for_layout(2, target)
+
+        self.assertEqual(context["workspace"]["id"], 2)
+        self.assertEqual(fake.actions[:2], [
+            ("focus-workspace", "2"), ("layout-focus", "2"),
+        ])
+
+    def test_target_activation_retries_after_a_late_focus_steal(self):
+        class FocusStealHyprland(FakeHyprland):
+            def __init__(self):
+                super().__init__()
+                self.active_id = 1
+                self.focus_attempts = 0
+
+            def focus_workspace(self, workspace):
+                self.active_id = int(workspace)
+                super().focus_workspace(workspace)
+
+            def focus_for_layout(self, window):
+                self.focus_attempts += 1
+                if self.focus_attempts == 1:
+                    raise RestoreError("focus was stolen")
+                super().focus_for_layout(window)
+
+            def active_context(self):
+                context = super().active_context()
+                context["workspace"]["id"] = self.active_id
+                return context
+
+        fake = FocusStealHyprland()
+        engine = WorkspaceEngine(hyprland=fake)
+
+        context = engine._activate_workspace_for_layout(
+            2, {"stableId": "2", "workspace": {"id": 2, "name": "2"}}
+        )
+
+        self.assertEqual(context["workspace"]["id"], 2)
+        self.assertEqual(fake.focus_attempts, 2)
+
+    def test_group_finalizes_later_workspaces_after_one_target_fails(self):
+        class SwitchingHyprland(FakeHyprland):
+            def __init__(self):
+                super().__init__()
+                self.current = None
+                self.active_id = 1
+
+            def active_workspace(self):
+                return {"id": self.active_id, "name": str(self.active_id)}
+
+            def active_context(self):
+                context = super().active_context()
+                context["workspace"] = {
+                    "id": self.active_id, "name": str(self.active_id),
+                    "tiledLayout": "monocle",
+                }
+                return context
+
+            def focus_workspace(self, workspace):
+                self.active_id = int(workspace)
+                super().focus_workspace(workspace)
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = PresetStore(Path(directory) / "presets.json")
+            first = store.save_snapshot("First", self._single_window_snapshot())
+            second = store.save_snapshot("Second", self._single_window_snapshot())
+            group = store.save_group("Workday", [
+                {"presetId": first["id"], "workspace": 2},
+                {"presetId": second["id"], "workspace": 4},
+            ])
+            fake = SwitchingHyprland()
+            engine = WorkspaceEngine(store=store, hyprland=fake)
+            engine.capabilities = lambda: {"ready": True}
+            finalized = []
+
+            def materialize(tasks, **_kwargs):
+                return {
+                    task["key"]: {
+                        "stableId": str(index), "mapped": True,
+                        "workspace": {
+                            "id": task["workspaceId"],
+                            "name": str(task["workspaceId"]),
+                        },
+                        "floating": False,
+                    }
+                    for index, task in enumerate(tasks, start=10)
+                }
+
+            def finalize(_snapshot, slot_windows, _context, **_kwargs):
+                workspace_id = next(iter(slot_windows.values()))["workspace"]["id"]
+                finalized.append(workspace_id)
+                if workspace_id == 2:
+                    raise RestoreError("workspace 2 failed")
+
+            with (
+                patch.object(engine, "_materialize_slots", side_effect=materialize),
+                patch.object(engine, "_finalize_snapshot", side_effect=finalize),
+                self.assertRaisesRegex(RestoreError, "workspace 2 failed"),
+            ):
+                engine.load_group(group["id"])
+
+            self.assertEqual(finalized, [2, 4])
 
     def test_duplicate_window_classes_launch_in_separate_waves(self):
         engine = WorkspaceEngine(hyprland=FakeHyprland())
