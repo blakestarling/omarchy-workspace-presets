@@ -17,7 +17,7 @@ class DesktopEntryTests(unittest.TestCase):
     @staticmethod
     def _proc_process(
         root: Path, pid: int, *, ppid: int, pgrp: int, session: int,
-        tty: int, tpgid: int, argv: list[str], cwd: str = "/home/blake",
+        tty: int, tpgid: int, argv: list[str], cwd: str = "/tmp",
     ) -> Path:
         process = root / str(pid)
         process.mkdir()
@@ -37,7 +37,10 @@ class DesktopEntryTests(unittest.TestCase):
             (process / "cmdline").write_bytes(
                 b"foot\0--app-id=TUI.tile\0-e\0omarchy-launch-docker-tui\0"
             )
-            os.symlink("/home/blake", process / "cwd")
+            # _process_cwd resolves strictly, so this has to point at a
+            # directory that exists wherever the suite runs.
+            working_directory = str(Path(directory).resolve())
+            os.symlink(working_directory, process / "cwd")
 
             result = terminal_process_launcher(42, "foot", proc_root=Path(directory))
 
@@ -46,7 +49,7 @@ class DesktopEntryTests(unittest.TestCase):
                 "argv": [
                     "foot", "--app-id=TUI.tile", "-e", "omarchy-launch-docker-tui",
                 ],
-                "cwd": "/home/blake",
+                "cwd": working_directory,
             }, "omarchy-launch-docker-tui"))
 
     def test_plain_shell_terminal_keeps_normal_desktop_resolution(self):
