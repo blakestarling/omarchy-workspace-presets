@@ -2,7 +2,9 @@
 
 All notable changes to Workspace Presets are documented here.
 
-## Unreleased
+## 1.9.1 - 2026-08-27
+
+Hardening for the paths that read files out of user-writable directories, and three restore-behaviour fixes for applications starting cold.
 
 - Read the preset file through one `O_NOFOLLOW`, `O_NONBLOCK` descriptor that has to be a regular file under an 8 MiB ceiling, rather than a `stat` followed by a separate read of the same pathname. The data directory is user-writable and the service is long-lived, so a symlink, a FIFO, a device node, or an oversized file left at that path could previously redirect the read, block startup for as long as the service ran, or exhaust the process before any schema check saw it.
 - Open each desktop entry and panel manifest non-blocking and require a regular file under a 256 KiB ceiling before parsing it. These scans cover `~/.local/share/applications` and `~/.config/omarchy/plugins`, so a FIFO named like an entry could stall a capture or preflight indefinitely. A file that fails the check is skipped and the rest of the directory is still scanned; symlinked entries are still followed.
