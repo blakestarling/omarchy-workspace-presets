@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import shlex
 import shutil
@@ -10,7 +11,8 @@ import subprocess
 import time
 from pathlib import Path
 
-from .errors import HyprlandError, UnsupportedError
+from . import SUPPORTED_LAYOUTS
+from .errors import HyprlandError, UnsupportedError, ValidationError
 
 
 # Hyprland serializes stable IDs as hexadecimal without a 0x prefix. IDs can
@@ -142,8 +144,37 @@ class Hyprland:
 
     @staticmethod
     def lua_string(value: object) -> str:
-        """Return a safely quoted UTF-8 Lua string literal."""
-        return json.dumps(str(value), ensure_ascii=False)
+        """Return a safely quoted UTF-8 Lua string literal.
+
+        JSON quoting cannot be reused here. Lua has no ``\\uXXXX`` escape, so a
+        control character would produce a chunk Hyprland refuses to compile.
+        Control bytes use Lua's three-digit decimal form, which stays
+        unambiguous when the following character is itself a digit.
+        """
+        out = ['"']
+        for char in str(value):
+            code = ord(char)
+            if char in '"\\':
+                out.append("\\" + char)
+            elif code < 0x20 or code == 0x7F:
+                out.append(f"\\{code:03d}")
+            else:
+                out.append(char)
+        out.append('"')
+        return "".join(out)
+
+    @staticmethod
+    def lua_number(value: object) -> str:
+        """Return a Lua numeric literal, refusing values Lua cannot express.
+
+        Preset geometry is interpolated into Lua as bare numbers. ``inf`` and
+        ``nan`` render as bare identifiers that Lua resolves to nil, producing
+        an arithmetic error deep inside a replay transaction.
+        """
+        number = float(value)
+        if not math.isfinite(number):
+            raise ValidationError("Saved layout geometry must be a finite number")
+        return repr(number)
 
     def lua_dispatch(self, expression: str, *, check: bool = True) -> str:
         """Run a Hyprland 0.56 typed dispatcher and surface result-table errors."""
@@ -198,10 +229,22 @@ class Hyprland:
             f"Could not focus {selector} before applying its saved layout"
         )
 
-    def focus_workspace(self, workspace: str | int) -> None:
+    @staticmethod
+    def workspace_selector(workspace: str | int) -> str:
+        """Return an unambiguous Hyprland workspace selector.
+
+        Hyprland parses a bare selector, so only a positive integer id is
+        unambiguous: a workspace a user named ``+2``, ``empty`` or ``previous``
+        would otherwise be read as a relative or special target and the window
+        would land somewhere else entirely.
+        """
         value = str(workspace)
         if not value.isdigit() or int(value) < 1:
             raise HyprlandError("Unsafe workspace number")
+        return value
+
+    def focus_workspace(self, workspace: str | int) -> None:
+        value = self.workspace_selector(workspace)
         self.lua_dispatch(f"hl.dsp.focus({{workspace={self.lua_string(value)}}})")
 
     def close(self, window: dict | str) -> None:
@@ -215,26 +258,23 @@ class Hyprland:
             f"hl.dsp.window.float({{action={self.lua_string(action)},window={selector}}})"
         )
 
-    def move_to_workspace(self, window: dict | str, workspace_name: str) -> None:
-        if not workspace_name:
-            raise HyprlandError("Unsafe workspace name")
+    def move_to_workspace(self, window: dict | str, workspace: str | int) -> None:
         selector = self.lua_string(self.selector(window))
-        workspace = self.lua_string(workspace_name)
+        target = self.lua_string(self.workspace_selector(workspace))
         self.lua_dispatch(
-            f"hl.dsp.window.move({{workspace={workspace},follow=false,window={selector}}})"
+            f"hl.dsp.window.move({{workspace={target},follow=false,window={selector}}})"
         )
 
     def exec_on_workspace(
-        self, command: list[str], workspace_name: str, *, cwd: str | None = None
+        self, command: list[str], workspace: str | int, *, cwd: str | None = None
     ) -> None:
         """Launch silently on a workspace without forcing persistent float state."""
-        if not workspace_name:
-            raise HyprlandError("Unsafe workspace name")
+        workspace_rule_target = self.workspace_selector(workspace)
         launch_command = list(command)
         if cwd:
             launch_command = ["env", f"--chdir={Path(cwd).expanduser().resolve()}", *launch_command]
         command_text = shlex.join(launch_command)
-        workspace_rule = f"{workspace_name} silent"
+        workspace_rule = f"{workspace_rule_target} silent"
         self.repl(
             "hl.exec_cmd("
             f"{self.lua_string(command_text)},"
@@ -301,9 +341,10 @@ class Hyprland:
         )
         for column in columns:
             anchor = self.lua_string(selectors[cursor])
-            width_command = self.lua_string(
-                f"colresize {column['width']:.6f}"
-            )
+            width = column["width"]
+            if not math.isfinite(width):
+                raise ValidationError("Saved column widths must be finite numbers")
+            width_command = self.lua_string(f"colresize {width:.6f}")
             operations.append(f"run(hl.dsp.focus({{window={anchor}}}))")
             operations.extend(
                 "run(hl.dsp.layout('consume'))"
@@ -316,7 +357,10 @@ class Hyprland:
                     if fraction is None:
                         continue
                     selector = self.lua_string(selectors[cursor + slot_offset])
-                    desired = max(1, round(float(fraction) * secondary_extent))
+                    scaled = float(fraction) * secondary_extent
+                    if not math.isfinite(scaled):
+                        raise ValidationError("Saved column sizes must be finite numbers")
+                    desired = max(1, round(scaled))
                     if horizontal:
                         size = f"x=sized.size.x,y={desired}"
                     else:
@@ -379,7 +423,7 @@ class Hyprland:
             f"local sels={lua_selectors}; run(hl.dsp.focus({{window={self.lua_string(target)}}})); "
             f"local leading=nil; for _,sel in ipairs(sels) do local w=hl.get_window(sel); local at=w and w.at; local value=at and at.{axis}; "
             "if value and (not leading or value<leading) then leading=value end end; "
-            f"if leading then local delta={desired + origin}-leading; if math.abs(delta)>=0.5 then run(hl.dsp.layout('move '..tostring(delta))) end end; "
+            f"if leading then local delta={self.lua_number(desired + origin)}-leading; if math.abs(delta)>=0.5 then run(hl.dsp.layout('move '..tostring(delta))) end end; "
             "if cursor then hl.dispatch(hl.dsp.cursor.move({x=cursor.x,y=cursor.y})) end"
         )
         self.repl(code)
@@ -388,6 +432,11 @@ class Hyprland:
         if not workspace_name:
             raise HyprlandError("Unsafe workspace name")
         layout_name = str(layout["name"])
+        # Preset files are the only source of this value and nothing upstream
+        # constrains it, so refuse anything outside the supported set before it
+        # reaches a Lua literal.
+        if layout_name not in SUPPORTED_LAYOUTS:
+            raise ValidationError(f"Unsupported saved layout {layout_name!r}")
         options: dict[str, str] = {}
         if layout["name"] == "master":
             orientation = str(layout.get("orientation", "left"))

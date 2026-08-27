@@ -82,16 +82,29 @@ class HyprlandLuaDispatcherTests(unittest.TestCase):
         hypr.focus(window)
         hypr.close(window)
         hypr.set_floating(window, True)
-        hypr.move_to_workspace(window, "dev's workspace")
+        hypr.move_to_workspace(window, 3)
         hypr.move_resize(window, {"x": 12, "y": 34, "width": 800, "height": 600})
 
         commands = "\n".join(call[0][2] for call in hypr.calls)
         self.assertIn("hl.dsp.focus({window=\"stableid:42af\"})", commands)
         self.assertIn("hl.dsp.window.close({window=\"stableid:42af\"})", commands)
         self.assertIn("hl.dsp.window.float({action=\"set\"", commands)
-        self.assertIn("workspace=\"dev's workspace\"", commands)
+        self.assertIn("workspace=\"3\"", commands)
         self.assertIn("hl.dsp.window.resize({x=800,y=600", commands)
         self.assertNotIn("hyprctl dispatch", commands)
+
+    def test_windows_are_only_ever_routed_by_numeric_workspace_id(self):
+        """A workspace a user named '+2' or 'empty' is a relative or special
+        selector to Hyprland, so a name must never reach a routing call."""
+        hypr = RecordingHyprland()
+        window = {"stableId": "42af", "address": "0x123"}
+
+        for unsafe in ("+2", "empty", "previous", "name:3", "dev's workspace", "0", "-1"):
+            with self.subTest(workspace=unsafe):
+                with self.assertRaises(HyprlandError):
+                    hypr.move_to_workspace(window, unsafe)
+                with self.assertRaises(HyprlandError):
+                    hypr.exec_on_workspace(["true"], unsafe)
 
     def test_layout_metadata_queries_hexadecimal_stable_ids(self):
         class MetadataHyprland(Hyprland):

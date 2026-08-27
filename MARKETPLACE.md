@@ -26,7 +26,9 @@ Loads are deliberately guarded: launchers and compatibility are validated before
 - The root `manifest.json` declares both a service and a bar widget.
 - The Python backend uses only the standard library and remains inside the plugin checkout.
 - Installation has no hooks, sudo, package installation, config editing, or files outside the XDG preset-data directory.
-- Custom launch commands are argv arrays and never pass through a shell.
+- Launch commands are stored as argv arrays and shell-quoted with `shlex.join` before
+  Hyprland's `exec_cmd` runs them under `/bin/sh -c`. Preset content is never concatenated
+  into a command string, and `tests/test_security.py` pins the quoting.
 - Preset data survives plugin removal by design and can be purged with the documented non-recursive command.
 
 ## Submission checklist
