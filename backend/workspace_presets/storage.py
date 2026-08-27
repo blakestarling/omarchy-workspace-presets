@@ -19,6 +19,10 @@ from .errors import ValidationError
 
 
 PLUGIN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+# Mirrors the limits _process_argv already applies when capturing a command
+# line, so a legitimately captured launcher can never fail validation.
+MAX_ARGV_ARGUMENTS = 256
+MAX_ARGV_CHARACTERS = 65536
 
 
 def utc_now() -> str:
@@ -50,14 +54,37 @@ class PresetStore:
 
     @contextmanager
     def _locked(self, *, exclusive: bool) -> Iterator[None]:
-        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        with self.lock_path.open("a+", encoding="utf-8") as lock:
-            os.chmod(self.lock_path, 0o600)
-            fcntl.flock(lock.fileno(), fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
+        directory = self.path.parent
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        # mkdir applies its mode only to the final component and never repairs
+        # a directory that already exists. Restricting the data directory is
+        # hardening, not the protection itself, so a failure is not fatal.
+        try:
+            os.chmod(directory, 0o700)
+        except OSError:
+            pass
+        # Opening the lock by path would follow a symlink planted by anything
+        # able to write into the data directory, and the permission fix would
+        # then land on that symlink's target instead of the lock.
+        try:
+            descriptor = os.open(
+                self.lock_path,
+                os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC,
+                0o600,
+            )
+        except OSError as exc:
+            raise ValidationError(
+                f"Cannot open the preset lock file {self.lock_path}: {exc}"
+            ) from exc
+        try:
+            os.fchmod(descriptor, 0o600)
+            fcntl.flock(descriptor, fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
             try:
                 yield
             finally:
-                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
 
     def _read_unlocked(self) -> dict:
         if not self.path.exists():
@@ -119,6 +146,7 @@ class PresetStore:
             seen_ids.add(preset_id)
             seen_names.add(normalized)
             PresetStore._validate_usage(preset, "Preset")
+            PresetStore._validate_snapshot(preset)
         # These fields were added without bumping the schema so existing v1
         # installations remain readable and are upgraded on their next write.
         groups = data.setdefault("presetGroups", [])
@@ -172,6 +200,33 @@ class PresetStore:
         if startup_group_id is not None and startup_group_id not in group_ids:
             raise ValidationError("The startup preset group does not exist")
         return data
+
+    @staticmethod
+    def _validate_snapshot(preset: dict) -> None:
+        """Check only what every stored snapshot must structurally satisfy.
+
+        Deeper checks live in the engine preflight instead: rejecting the whole
+        file here would make one damaged preset hide every other preset, while
+        preflight refuses a single bad preset before anything is closed.
+        """
+        snapshot = preset.get("snapshot")
+        if snapshot is None:
+            return
+        if not isinstance(snapshot, dict):
+            raise ValidationError("Preset snapshots must be objects")
+        windows = snapshot.get("windows", [])
+        if not isinstance(windows, list):
+            raise ValidationError("Preset snapshots must have a windows array")
+        seen_slots: set[str] = set()
+        for slot in windows:
+            if not isinstance(slot, dict):
+                raise ValidationError("Every saved window must be an object")
+            slot_id = slot.get("id")
+            if not isinstance(slot_id, str) or not slot_id:
+                raise ValidationError("Every saved window must have an id")
+            if slot_id in seen_slots:
+                raise ValidationError("Saved window ids must be unique")
+            seen_slots.add(slot_id)
 
     @staticmethod
     def _validate_usage(item: dict, label: str) -> None:
@@ -497,6 +552,19 @@ class PresetStore:
                 or not all(isinstance(value, str) and value for value in argv)
             ):
                 raise ValidationError("Custom launchers require a non-empty argv array")
+            # Match the bounds the /proc capture path already enforces so no
+            # captured command can fail this check, and reject the null bytes
+            # that neither exec nor a Lua literal can carry.
+            if len(argv) > MAX_ARGV_ARGUMENTS:
+                raise ValidationError(
+                    f"Custom launchers are limited to {MAX_ARGV_ARGUMENTS} arguments"
+                )
+            if sum(len(value) for value in argv) > MAX_ARGV_CHARACTERS:
+                raise ValidationError(
+                    f"Custom launchers are limited to {MAX_ARGV_CHARACTERS} characters"
+                )
+            if any("\0" in value for value in argv):
+                raise ValidationError("Custom launcher arguments cannot contain null bytes")
             cwd = launcher.get("cwd")
             if cwd is not None and (
                 not isinstance(cwd, str)

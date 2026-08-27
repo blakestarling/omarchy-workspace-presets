@@ -186,14 +186,32 @@ def main(argv: list[str] | None = None) -> int:
                 launch_timeout=max(1.0, args.launch_timeout),
             )
         elif args.command == "startup-group":
-            runtime = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp"))
-            signature = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", "unknown")
+            # The once-per-session guard must live in the private per-user
+            # runtime directory. Falling back to /tmp put it in a world-writable
+            # directory under a name any local user could predict and
+            # pre-create, silently suppressing the user's startup group.
+            runtime = os.environ.get("XDG_RUNTIME_DIR")
+            signature = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")
+            if not runtime or not signature:
+                emit(
+                    "result",
+                    operation=args.command,
+                    data={"launched": False, "reason": "no-session-runtime-directory"},
+                )
+                return 0
+            marker_dir = Path(runtime) / "omarchy-workspace-presets"
             marker_name = hashlib.sha256(signature.encode()).hexdigest()[:20]
-            marker = runtime / f"omarchy-workspace-presets-{marker_name}.startup"
+            marker = marker_dir / f"{marker_name}.startup"
             try:
+                marker_dir.mkdir(mode=0o700, exist_ok=True)
+                os.chmod(marker_dir, 0o700)
                 descriptor = os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             except FileExistsError:
                 result = {"launched": False, "reason": "already-attempted-this-session"}
+            except OSError as exc:
+                raise WorkspacePresetsError(
+                    f"Cannot record the startup marker in {marker_dir}: {exc}"
+                ) from exc
             else:
                 os.close(descriptor)
                 settings = store.startup_settings()

@@ -2,6 +2,20 @@
 
 All notable changes to Workspace Presets are documented here.
 
+## 1.8.3 - 2026-08-26
+
+Security hardening from a full audit of the backend, the Hyprland Lua bridge, and the QML surface.
+
+- Strip markup and control characters from window classes and titles before they appear in any message. These are set by the application that owns the window - a browser title is a remote page's own title element - and bar tooltips are drawn by shell chrome that renders auto-detected rich text.
+- Open the preset lock with `O_NOFOLLOW` and adjust it by descriptor, so a symlink planted in the data directory can no longer redirect its permission fix onto another file. Restrict the data directory itself on every access.
+- Quote Lua literals with Lua's own escaping instead of JSON's. Control characters previously produced `\uXXXX`, which Hyprland cannot compile, failing a restore with an opaque IPC error.
+- Refuse saved layout names outside the supported set, and non-finite geometry, before either reaches Hyprland's Lua evaluator.
+- Prove a preset is internally consistent during preflight, while its windows still exist, instead of failing part-way through a restore that has already closed them.
+- Route windows by numeric workspace ID rather than by name, so a workspace named `+2`, `empty`, or `previous` can no longer be reinterpreted as a relative or special target.
+- Keep the once-per-session startup marker in the private per-user runtime directory and refuse to run without one, rather than falling back to a predictable path in world-writable `/tmp`.
+- Reject null bytes in launcher arguments and bound argv to the same limits the capture path already applies.
+- Correct `SECURITY.md` and the marketplace reviewer notes: launch commands do reach `/bin/sh -c` through Hyprland's `exec_cmd`, and are made safe by `shlex.join` quoting rather than by avoiding a shell. Document that terminal command lines are captured verbatim.
+
 ## 1.8.2 - 2026-08-26
 
 - Bind single-preset loads to the exact preflighted preset, workspace, and stable window IDs, and never close windows that appear after preflight.

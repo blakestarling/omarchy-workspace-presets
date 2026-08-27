@@ -37,6 +37,21 @@ from .storage import PresetStore, utc_now
 
 Progress = Callable[[str, str, dict | None], None]
 VERSION_RE = re.compile(r"^(\d+)\.(\d+)")
+UNSAFE_LABEL = re.compile(r"[\x00-\x1f\x7f<>&]")
+
+
+def safe_label(value: object, *, fallback: str = "window", limit: int = 60) -> str:
+    """Return a window label that is safe to place in a user-visible message.
+
+    Window classes and titles are written by whatever application owns the
+    window - a browser title is a remote page's own <title> - and these
+    messages reach shell chrome whose Text elements leave textFormat at
+    Text.AutoText. Markup characters must never survive into one.
+    """
+    text = " ".join(UNSAFE_LABEL.sub(" ", str(value or "")).split())
+    if not text:
+        return fallback
+    return (text[:limit].rstrip() + "\u2026") if len(text) > limit else text
 
 
 def _noop_progress(stage: str, message: str, details: dict | None = None) -> None:
@@ -139,7 +154,7 @@ class WorkspaceEngine:
             geometry = rect_for(client)
             self.progress(
                 "capture",
-                f"Capturing {match['class'] or match['title'] or f'window {index}'}",
+                f"Capturing {safe_label(match['class'] or match['title'], fallback=f'window {index}')}",
                 {"current": index, "total": len(clients)},
             )
             windows.append(
@@ -301,6 +316,52 @@ class WorkspaceEngine:
                 if old.get("launcher"):
                     slot["launcher"] = copy.deepcopy(old["launcher"])
 
+    @staticmethod
+    def _validate_snapshot_integrity(preset: dict) -> None:
+        """Refuse a preset whose parts disagree, before anything is closed.
+
+        Restore closes the target windows first and then indexes the launched
+        windows by slot id. A snapshot referencing a slot it does not define
+        would raise part-way through, after the user's windows are already gone
+        and with no way to put them back.
+        """
+        name = preset.get("name", "")
+        snapshot = preset.get("snapshot")
+        if not isinstance(snapshot, dict):
+            raise ValidationError(f"Preset {name!r} has no saved snapshot")
+        windows = snapshot.get("windows")
+        if not isinstance(windows, list) or not windows:
+            raise ValidationError(f"Preset {name!r} has no saved windows")
+        slot_ids = {str(slot.get("id", "")) for slot in windows}
+        layout = snapshot.get("layout")
+        if not isinstance(layout, dict) or layout.get("name") not in SUPPORTED_LAYOUTS:
+            raise ValidationError(
+                f"Preset {name!r} was saved with an unsupported layout",
+                details={"supportedLayouts": list(SUPPORTED_LAYOUTS)},
+            )
+        try:
+            referenced = set(target_order(layout))
+        except (KeyError, TypeError, ValueError, ValidationError) as exc:
+            raise ValidationError(
+                f"Preset {name!r} has a damaged saved layout: {exc}"
+            ) from exc
+        for group in snapshot.get("groups") or []:
+            if not isinstance(group, dict):
+                raise ValidationError(f"Preset {name!r} has a damaged window group")
+            referenced.update(str(member) for member in group.get("members", []))
+            referenced.add(str(group.get("representativeSlotId", "")))
+            referenced.add(str(group.get("activeSlotId", "")))
+        focus_id = snapshot.get("finalFocusSlotId")
+        if isinstance(focus_id, str):
+            referenced.add(focus_id)
+        referenced.discard("")
+        missing = sorted(referenced - slot_ids)
+        if missing:
+            raise ValidationError(
+                f"Preset {name!r} references {len(missing)} saved window(s) it no longer contains",
+                details={"missingSlotIds": missing},
+            )
+
     def preflight(self, preset_id: str) -> dict:
         capability = self.capabilities()
         if not capability["ready"]:
@@ -311,6 +372,7 @@ class WorkspaceEngine:
             raise ValidationError(
                 f"Preset {preset['name']!r} has {summary['unresolvedCount']} unresolved launcher(s)"
             )
+        self._validate_snapshot_integrity(preset)
         context = self.hypr.active_context()
         current = self.hypr.workspace_clients(int(context["workspace"]["id"]))
         entries = scan_desktop_entries()
@@ -441,6 +503,7 @@ class WorkspaceEngine:
             key=lambda item: self.group_workspace_id(item["workspace"]),
         ):
             preset = self.store.get(assignment["presetId"])
+            self._validate_snapshot_integrity(preset)
             preset_fingerprints.append([
                 preset["id"],
                 hashlib.sha256(
@@ -559,12 +622,13 @@ class WorkspaceEngine:
         tasks = []
         for target in targets:
             workspace_name = str(target["workspace"]["name"])
+            workspace_id = int(target["workspace"]["id"])
             self.hypr.set_workspace_layout(workspace_name, target["snapshot"]["layout"])
             for slot in target["snapshot"]["windows"]:
                 tasks.append({
                     "key": f"{target['index']}:{slot['id']}",
                     "slot": slot,
-                    "workspaceName": workspace_name,
+                    "workspaceId": workspace_id,
                     "conflict": target["conflicts"].get(slot["id"]),
                     "targetIndex": target["index"],
                 })
@@ -687,6 +751,9 @@ class WorkspaceEngine:
                 },
             )
         workspace_name = str(context["workspace"]["name"])
+        # Windows are routed by workspace ID, so prove the ID is usable while
+        # the workspace is still intact rather than after it has been cleared.
+        Hyprland.workspace_selector(active_workspace_id)
         # Close only the exact stable IDs covered by the preflight token. A
         # window that appears after this check must never be swept into the
         # replacement without warning and consent.
@@ -719,7 +786,7 @@ class WorkspaceEngine:
         slot_windows = self._materialize_slots([{
             "key": slot["id"],
             "slot": slot,
-            "workspaceName": workspace_name,
+            "workspaceId": active_workspace_id,
             "conflict": conflict_by_slot.get(slot["id"]),
         } for slot in slots], conflict_policy=conflict_policy, launch_timeout=launch_timeout)
         self._finalize_snapshot(snapshot, slot_windows, context)
@@ -790,7 +857,7 @@ class WorkspaceEngine:
             if window:
                 stable_id = str(window.get("stableId", ""))
                 used_existing.add(stable_id)
-                self.hypr.move_to_workspace(window, task["workspaceName"])
+                self.hypr.move_to_workspace(window, task["workspaceId"])
                 self.hypr.set_floating(window, True)
                 windows[task["key"]] = self.hypr.find_window(stable_id) or window
             else:
@@ -805,9 +872,10 @@ class WorkspaceEngine:
                 for item in self.hypr.clients()
             }
             labels = [
-                task["slot"].get("match", {}).get("class")
-                or task["slot"].get("match", {}).get("title")
-                or "window"
+                safe_label(
+                    task["slot"].get("match", {}).get("class")
+                    or task["slot"].get("match", {}).get("title")
+                )
                 for task in wave
             ]
             self.progress(
@@ -817,7 +885,7 @@ class WorkspaceEngine:
             )
             for task in wave:
                 self._launch_on_workspace(
-                    task["slot"]["launcher"], task["workspaceName"]
+                    task["slot"]["launcher"], task["workspaceId"]
                 )
 
             unresolved = {task["key"]: task for task in wave}
@@ -840,7 +908,7 @@ class WorkspaceEngine:
                         continue
                     task = unresolved.pop(key)
                     assigned_ids.add(stable_id)
-                    self.hypr.move_to_workspace(candidate, task["workspaceName"])
+                    self.hypr.move_to_workspace(candidate, task["workspaceId"])
                     self.hypr.set_floating(candidate, True)
                     windows[key] = self.hypr.find_window(stable_id) or candidate
                     launched.append(key)
@@ -850,7 +918,9 @@ class WorkspaceEngine:
             if unresolved:
                 task = next(iter(unresolved.values()))
                 slot = task["slot"]
-                label = slot.get("match", {}).get("class") or slot.get("match", {}).get("title") or "window"
+                label = safe_label(
+                    slot.get("match", {}).get("class") or slot.get("match", {}).get("title")
+                )
                 details = {
                     "slotId": slot["id"],
                     "launcher": slot["launcher"],
@@ -947,7 +1017,7 @@ class WorkspaceEngine:
         except OSError as exc:
             raise LaunchError(f"Could not start {command[-1]!r}: {exc}") from exc
 
-    def _launch_on_workspace(self, launcher: dict, workspace_name: str) -> None:
+    def _launch_on_workspace(self, launcher: dict, workspace: str | int) -> None:
         launch = getattr(self.hypr, "exec_on_workspace", None)
         if launch is None:
             self._launch(launcher)
@@ -955,7 +1025,7 @@ class WorkspaceEngine:
         try:
             launch(
                 self._launcher_command(launcher),
-                workspace_name,
+                workspace,
                 cwd=launcher.get("cwd"),
             )
         except OSError as exc:

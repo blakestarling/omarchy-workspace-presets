@@ -388,7 +388,7 @@ class EngineRestoreTests(unittest.TestCase):
         tasks = []
         for index, window_class in enumerate(("firefox", "code"), start=1):
             tasks.append({
-                "key": str(index), "workspaceName": str(index),
+                "key": str(index), "workspaceId": index,
                 "slot": {
                     "id": str(index), "match": {"class": window_class},
                     "launcher": {"kind": "command", "argv": ["true"]},
@@ -419,7 +419,7 @@ class EngineRestoreTests(unittest.TestCase):
     def test_duplicate_window_classes_launch_in_separate_waves(self):
         engine = WorkspaceEngine(hyprland=FakeHyprland())
         tasks = [{
-            "key": str(index), "workspaceName": str(index),
+            "key": str(index), "workspaceId": index,
             "slot": {
                 "id": str(index),
                 "match": {"class": "foot", "initialClass": "foot"},

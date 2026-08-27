@@ -24,6 +24,8 @@ This is a native Omarchy Quattro plugin: the bar widget and management panel run
 
 Application-owned state is outside the compositor's control and is not restored. That includes browser tabs, open documents, unsaved editor buffers, and the internal state of terminal programs. When a supported terminal was launched with an explicit program, the plugin saves and reruns that outer terminal command; the program itself remains responsible for restoring its session.
 
+That terminal command is saved verbatim, so a program you launched with a credential on its command line is written into `presets.json` and rerun on every load. The file is created with mode `0600` in a `0700` directory, but if you would rather not store a particular command, set that window's launcher manually under **Set up** instead.
+
 ## Requirements
 
 - Omarchy 4.0 or newer

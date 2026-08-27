@@ -33,12 +33,22 @@ BarWidget {
     if (panelLoader.item && panelLoader.item.opened) panelLoader.item.close()
   }
   function togglePanel() { root.opened ? root.close() : root.open() }
+
   function closeForPopoutSwitch() {
     confirmationDelay.stop()
     if (confirmationLoader.item && confirmationLoader.item.opened)
       confirmationLoader.item.closeForPopoutSwitch()
     if (panelLoader.item && panelLoader.item.opened)
       panelLoader.item.closeForPopoutSwitch()
+  }
+
+  // Bar tooltips are drawn by shell chrome whose Text element leaves
+  // textFormat at Text.AutoText, so a '<' anywhere in the string makes Qt
+  // parse the whole message as rich text. Backend messages can embed window
+  // classes and titles, which any application - including a remote page -
+  // controls. Strip markup characters before the string leaves this plugin.
+  function plainTooltip(value) {
+    return String(value === undefined || value === null ? "" : value).replace(/[<>&]/g, " ")
   }
 
   implicitWidth: button.implicitWidth
@@ -158,7 +168,9 @@ BarWidget {
     text: root.presetService && root.presetService.busy ? "󰔟" : "󰆓"
     slotSize: Style.bar.statusSlot
     tooltipText: root.presetService
-      ? (root.presetService.errorMessage || root.presetService.statusMessage || "Workspace Presets")
+      ? root.plainTooltip(
+          root.presetService.errorMessage || root.presetService.statusMessage || "Workspace Presets"
+        )
       : "Workspace Presets"
 
     onPressed: function(mouseButton) {

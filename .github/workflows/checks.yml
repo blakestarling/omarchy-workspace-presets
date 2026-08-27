@@ -18,6 +18,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+      - name: Install Lua
+        # The Lua quoting fuzz test parses generated literals with the real
+        # interpreter, since that quoting is what keeps preset data out of
+        # hyprctl repl's evaluator.
+        run: sudo apt-get update && sudo apt-get install -y lua5.4
       - name: Compile backend
         run: python -m compileall -q backend
       - name: Run tests
