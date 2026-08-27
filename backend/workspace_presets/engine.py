@@ -70,8 +70,23 @@ class WorkspaceEngine:
         self.store = store or PresetStore()
         self.hypr = hyprland or Hyprland()
         self.progress = progress or _noop_progress
+        self._capabilities: dict | None = None
 
-    def capabilities(self) -> dict:
+    def capabilities(self, *, refresh: bool = False) -> dict:
+        """Probe the installed compositor and Omarchy versions.
+
+        Every preflight opens with this check, and `omarchy version` is a shell
+        script costing about 80 ms - the bulk of a restore's fixed overhead, to
+        re-answer a question that cannot change while the session is running.
+        The panel's explicit recheck passes refresh=True.
+        """
+        if self._capabilities is not None and not refresh:
+            return self._capabilities
+        result = self._probe_capabilities()
+        self._capabilities = result
+        return result
+
+    def _probe_capabilities(self) -> dict:
         missing = [
             name for name in ("hyprctl", "uwsm-app", "gtk-launch", "omarchy-shell")
             if not shutil.which(name)
@@ -456,17 +471,19 @@ class WorkspaceEngine:
         panel_plugins = scan_omarchy_panel_plugins()
         resolved = 0
         normalized = 0
-        changed_presets = 0
+        changed_ids: set[str] = set()
+        # Collected first so the whole repair pass is one write and one fsync
+        # rather than one per slot.
+        updates: list[tuple[str, str, dict]] = []
         for summary in self.store.list_summaries():
             preset = self.store.get(summary["id"])
-            changed = False
             for slot in preset.get("snapshot", {}).get("windows", []):
                 launcher, _ = resolve_launcher(slot.get("match", {}), entries, panel_plugins)
                 current = slot.get("launcher")
                 if not current and launcher:
-                    self.store.set_launcher(preset["id"], slot["id"], launcher)
+                    updates.append((preset["id"], slot["id"], launcher))
                     resolved += 1
-                    changed = True
+                    changed_ids.add(preset["id"])
                 elif (
                     launcher and launcher.get("kind") == "omarchy-plugin"
                     and current and current.get("kind") == "command"
@@ -474,11 +491,11 @@ class WorkspaceEngine:
                         "omarchy-shell", "shell", "summon", launcher["pluginId"], "{}"
                     ]
                 ):
-                    self.store.set_launcher(preset["id"], slot["id"], launcher)
+                    updates.append((preset["id"], slot["id"], launcher))
                     normalized += 1
-                    changed = True
-            if changed:
-                changed_presets += 1
+                    changed_ids.add(preset["id"])
+        self.store.set_launchers(updates)
+        changed_presets = len(changed_ids)
         return {
             "resolvedWindowCount": resolved,
             "normalizedLauncherCount": normalized,

@@ -135,6 +135,8 @@ BarWidget {
         busy: root.presetService.busy,
         currentOperation: root.presetService.currentOperation,
         queuedCommands: root.presetService.commandQueue.length,
+        workerReady: root.presetService.workerReady,
+        workerFailedToStart: root.presetService.workerFailedToStart,
         pendingPreflight: root.presetService.pendingPreflight,
         presetGroupCount: root.presetService.presetGroups.length,
         lastResult: root.presetService.lastResult,

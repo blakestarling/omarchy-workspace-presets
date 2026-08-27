@@ -97,8 +97,8 @@ Panel {
 
   function isBackgroundOperation(operation) {
     return [
-      "capabilities", "resolve-launchers", "list", "groups", "startup-group",
-      "details", "desktop-entries"
+      "capabilities", "resolve-launchers", "state", "list", "groups",
+      "startup-group", "details", "desktop-entries"
     ].indexOf(String(operation || "")) !== -1
   }
 
