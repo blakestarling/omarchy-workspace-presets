@@ -140,6 +140,27 @@ class LauncherValidationTests(unittest.TestCase):
                 with self.assertRaises(ValidationError):
                     PresetStore._validate_launcher({"kind": "command", "argv": argv})
 
+    def test_a_desktop_id_must_look_like_one_the_scan_could_produce(self):
+        # Ending in ".desktop" was the whole check, which let a path or a line
+        # break be stored as an id.
+        for desktop_id in ("org.foo.Bar.desktop", "Chat Web App.desktop"):
+            with self.subTest(desktop_id=desktop_id):
+                PresetStore._validate_launcher(
+                    {"kind": "desktop", "desktopId": desktop_id}
+                )
+        for desktop_id in (
+            "../../../home/user/evil.desktop",
+            "foo.desktop\n",
+            "foo;id.desktop",
+            "foo.desktop\x00",
+            "$(id).desktop",
+        ):
+            with self.subTest(desktop_id=desktop_id):
+                with self.assertRaises(ValidationError):
+                    PresetStore._validate_launcher(
+                        {"kind": "desktop", "desktopId": desktop_id}
+                    )
+
     def test_a_captured_command_line_can_never_fail_its_own_bounds(self):
         # _process_argv caps captures at 256 arguments and 65536 bytes, so the
         # storage bounds must sit at or above that or a capture could not load.

@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
 
-from . import SCHEMA_VERSION
+from . import SAFE_DESKTOP_ID, SCHEMA_VERSION
 from .errors import ValidationError
 
 
@@ -678,7 +678,11 @@ class PresetStore:
         kind = launcher.get("kind")
         if kind == "desktop":
             desktop_id = launcher.get("desktopId")
-            if not isinstance(desktop_id, str) or not desktop_id.endswith(".desktop"):
+            # Ending in ".desktop" was the whole test, which let a path or a
+            # line break be stored as an id. Nothing downstream interpolates
+            # one unquoted, so this closes no exploit; it keeps what is saved
+            # to what the entry scan could have produced.
+            if not isinstance(desktop_id, str) or not SAFE_DESKTOP_ID.fullmatch(desktop_id):
                 raise ValidationError("Desktop launchers require a .desktop id")
             return
         if kind == "command":
