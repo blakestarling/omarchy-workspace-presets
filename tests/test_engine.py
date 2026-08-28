@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from workspace_presets.desktop import OmarchyPanelPlugin
 from workspace_presets.engine import WorkspaceEngine
-from workspace_presets.errors import LaunchError, RestoreError
+from workspace_presets.errors import LaunchError, RestoreError, ValidationError
 from workspace_presets.storage import PresetStore
 
 
@@ -1009,6 +1009,298 @@ class EngineRestoreTests(unittest.TestCase):
                 store.get(preset["id"])["snapshot"]["windows"][0]["launcher"],
                 {"kind": "omarchy-plugin", "pluginId": "quickshell.spotify"},
             )
+
+
+class MultiMonitorHyprland(FakeHyprland):
+    """Two monitors: DP-1 active on workspace 1, HDMI-1 active on workspace 5."""
+
+    def __init__(self):
+        super().__init__()
+        self.focused_monitor = "DP-1"
+        self.monitors_def = [
+            {"name": "DP-1", "workspaceId": 1},
+            {"name": "HDMI-1", "workspaceId": 5},
+        ]
+
+    def _monitor(self, name):
+        return next(item for item in self.monitors_def if item["name"] == name)
+
+    def _context(self, definition):
+        return {
+            "workspace": {
+                "id": definition["workspaceId"],
+                "name": str(definition["workspaceId"]),
+                "tiledLayout": "monocle",
+            },
+            "monitor": {
+                "name": definition["name"],
+                "focused": definition["name"] == self.focused_monitor,
+                "activeWorkspace": {
+                    "id": definition["workspaceId"],
+                    "name": str(definition["workspaceId"]),
+                },
+            },
+            "workarea": {"x": 0, "y": 0, "width": 1000, "height": 800, "scale": 1},
+        }
+
+    def active_window(self):
+        return self.current
+
+    def active_workspace(self):
+        return self.active_context()["workspace"]
+
+    def active_context(self):
+        return self._context(self._monitor(self.focused_monitor))
+
+    def active_contexts(self):
+        ordered = [self._monitor(self.focused_monitor)] + [
+            item for item in self.monitors_def if item["name"] != self.focused_monitor
+        ]
+        return [self._context(item) for item in ordered]
+
+    def monitors(self):
+        return [self._context(item)["monitor"] for item in self.monitors_def]
+
+    def focus_workspace(self, workspace):
+        workspace_id = int(workspace)
+        for item in self.monitors_def:
+            if item["workspaceId"] == workspace_id:
+                self.focused_monitor = item["name"]
+        super().focus_workspace(workspace)
+
+
+class MultiMonitorEngineTests(unittest.TestCase):
+    def _capture(self, store, fake):
+        engine = WorkspaceEngine(store=store, hyprland=fake)
+        engine.capabilities = lambda: {"ready": True}
+        launcher = {"kind": "command", "argv": ["true"]}
+        with (
+            patch("workspace_presets.engine.scan_desktop_entries", return_value={}),
+            patch("workspace_presets.engine.scan_omarchy_panel_plugins", return_value={}),
+            patch("workspace_presets.engine.process_executable", return_value=""),
+            patch("workspace_presets.engine.terminal_process_launcher", return_value=None),
+            patch("workspace_presets.engine.resolve_launcher", return_value=(launcher, [])),
+        ):
+            return engine, engine.capture("Both", multi_monitor=True)
+
+    def test_multi_monitor_capture_records_one_segment_per_monitor(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = PresetStore(Path(directory) / "presets.json")
+            class CaptureHyprland(MultiMonitorHyprland):
+                def layout_metadata(self, clients):
+                    return {}
+
+            fake = CaptureHyprland()
+            fake.spawned.append({
+                "address": "0x2", "stableId": "2", "mapped": True,
+                "workspace": {"id": 5, "name": "5"},
+                "class": "code", "initialClass": "code",
+                "title": "Editor", "floating": False,
+            })
+            engine, saved = self._capture(store, fake)
+            self.assertEqual(fake.actions, [])
+
+            snapshot = store.get(saved["id"])["snapshot"]
+            self.assertTrue(snapshot["multiMonitor"])
+            self.assertEqual(
+                [segment["monitor"] for segment in snapshot["segments"]],
+                ["DP-1", "HDMI-1"],
+            )
+            self.assertEqual(
+                [slot["segmentId"] for slot in snapshot["windows"]],
+                ["DP-1", "HDMI-1"],
+            )
+            self.assertEqual(len(snapshot["windows"]), 2)
+            # Final focus follows the focused monitor's segment.
+            self.assertEqual(
+                snapshot["finalFocusSlotId"], snapshot["windows"][0]["id"]
+            )
+            self.assertTrue(saved["multiMonitor"])
+            self.assertEqual(saved["monitorCount"], 2)
+            self.assertEqual(saved["layout"], "multi-monitor")
+            self.assertEqual(saved["windowCount"], 2)
+
+    def test_multi_monitor_capture_skips_monitors_without_windows(self):
+        class CaptureHyprland(MultiMonitorHyprland):
+            def layout_metadata(self, clients):
+                return {}
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = PresetStore(Path(directory) / "presets.json")
+            fake = CaptureHyprland()
+            engine, saved = self._capture(store, fake)
+
+            snapshot = store.get(saved["id"])["snapshot"]
+            self.assertEqual(
+                [segment["monitor"] for segment in snapshot["segments"]], ["DP-1"]
+            )
+            self.assertEqual(saved["monitorCount"], 1)
+
+    def test_multi_monitor_preflight_targets_each_monitor(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = PresetStore(Path(directory) / "presets.json")
+            class CaptureHyprland(MultiMonitorHyprland):
+                def layout_metadata(self, clients):
+                    return {}
+
+            fake = CaptureHyprland()
+            fake.spawned.append({
+                "address": "0x2", "stableId": "2", "mapped": True,
+                "workspace": {"id": 5, "name": "5"},
+                "class": "code", "initialClass": "code",
+                "title": "Editor", "floating": False,
+            })
+            self._capture(store, fake)
+
+            engine = WorkspaceEngine(store=store, hyprland=fake)
+            engine.capabilities = lambda: {"ready": True}
+            preset_id = store.list_summaries()[0]["id"]
+            check = engine.preflight(preset_id)
+            self.assertEqual(check["workspaceIds"], [1, 5])
+            self.assertEqual(
+                [item["monitor"] for item in check["targets"]], ["DP-1", "HDMI-1"]
+            )
+            self.assertEqual(check["windowCountToClose"], 2)
+            self.assertTrue(check["requiresConfirmation"])
+            self.assertEqual(len(check["token"]), 64)
+
+    def test_multi_monitor_load_restores_both_monitors(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = PresetStore(Path(directory) / "presets.json")
+
+            class CaptureHyprland(MultiMonitorHyprland):
+                def layout_metadata(self, clients):
+                    return {}
+
+            fake = CaptureHyprland()
+            fake.spawned.append({
+                "address": "0x2", "stableId": "2", "mapped": True,
+                "workspace": {"id": 5, "name": "5"},
+                "class": "code", "initialClass": "code",
+                "title": "Editor", "floating": False,
+            })
+            self._capture(store, fake)
+            saved_id = store.list_summaries()[0]["id"]
+
+            # A fresh desktop: nothing is open anywhere.
+            fake.current = None
+            fake.spawned = []
+            engine = WorkspaceEngine(store=store, hyprland=fake)
+            engine.capabilities = lambda: {"ready": True}
+            spawned = []
+            captured_classes = [
+                slot["match"]["class"]
+                for slot in store.get(saved_id)["snapshot"]["windows"]
+            ]
+
+            def spawn(_launcher):
+                index = len(spawned)
+                spawned.append(index)
+                fake.spawned.append({
+                    "address": hex(0x10 + index), "stableId": str(10 + index),
+                    "mapped": True, "workspace": {"id": 1, "name": "1"},
+                    "class": captured_classes[index],
+                    "initialClass": captured_classes[index],
+                    "title": "Restored", "floating": False,
+                })
+
+            check = engine.preflight(saved_id)
+            self.assertFalse(check["requiresConfirmation"])
+            with patch.object(engine, "_launch", side_effect=spawn):
+                result = engine.load(
+                    saved_id,
+                    expected_workspace_ids=check["workspaceIds"],
+                    expected_token=check["token"],
+                    launch_timeout=0.2,
+                )
+            self.assertEqual(result["monitorCount"], 2)
+            self.assertEqual(result["windowCount"], 2)
+            self.assertEqual(
+                sorted(window["workspace"]["id"] for window in fake.spawned), [1, 5]
+            )
+            # The monitor that was focused when the load began is focused again.
+            self.assertEqual(
+                [item for item in fake.actions if item[0] == "focus-workspace"][-1],
+                ("focus-workspace", "1"),
+            )
+
+    def test_multi_monitor_load_refuses_changed_workspace_set(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = PresetStore(Path(directory) / "presets.json")
+
+            class CaptureHyprland(MultiMonitorHyprland):
+                def layout_metadata(self, clients):
+                    return {}
+
+            fake = CaptureHyprland()
+            fake.spawned.append({
+                "address": "0x2", "stableId": "2", "mapped": True,
+                "workspace": {"id": 5, "name": "5"},
+                "class": "code", "initialClass": "code",
+                "title": "Editor", "floating": False,
+            })
+            self._capture(store, fake)
+            saved_id = store.list_summaries()[0]["id"]
+            fake.current = None
+            engine = WorkspaceEngine(store=store, hyprland=fake)
+            engine.capabilities = lambda: {"ready": True}
+
+            check = engine.preflight(saved_id)
+            with self.assertRaisesRegex(Exception, "changed after load confirmation"):
+                engine.load(
+                    saved_id,
+                    expected_workspace_ids=[1],
+                    expected_token=check["token"],
+                )
+            self.assertEqual(fake.actions, [])
+
+    def test_multi_monitor_preflight_refuses_a_missing_monitor(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = PresetStore(Path(directory) / "presets.json")
+
+            class CaptureHyprland(MultiMonitorHyprland):
+                def layout_metadata(self, clients):
+                    return {}
+
+            fake = CaptureHyprland()
+            fake.spawned.append({
+                "address": "0x2", "stableId": "2", "mapped": True,
+                "workspace": {"id": 5, "name": "5"},
+                "class": "code", "initialClass": "code",
+                "title": "Editor", "floating": False,
+            })
+            self._capture(store, fake)
+            saved_id = store.list_summaries()[0]["id"]
+
+            fake.monitors_def = [fake.monitors_def[0]]
+            engine = WorkspaceEngine(store=store, hyprland=fake)
+            engine.capabilities = lambda: {"ready": True}
+            with self.assertRaisesRegex(ValidationError, "not connected"):
+                engine.preflight(saved_id)
+
+    def test_multi_monitor_preset_cannot_join_a_group(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = PresetStore(Path(directory) / "presets.json")
+
+            class CaptureHyprland(MultiMonitorHyprland):
+                def layout_metadata(self, clients):
+                    return {}
+
+            fake = CaptureHyprland()
+            fake.spawned.append({
+                "address": "0x2", "stableId": "2", "mapped": True,
+                "workspace": {"id": 5, "name": "5"},
+                "class": "code", "initialClass": "code",
+                "title": "Editor", "floating": False,
+            })
+            self._capture(store, fake)
+            saved_id = store.list_summaries()[0]["id"]
+            group = store.save_group("Desktop", [{"presetId": saved_id, "workspace": 1}])
+
+            engine = WorkspaceEngine(store=store, hyprland=fake)
+            engine.capabilities = lambda: {"ready": True}
+            with self.assertRaisesRegex(ValidationError, "spans multiple monitors"):
+                engine.preflight_group(group["id"])
 
 
 if __name__ == "__main__":

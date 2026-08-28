@@ -129,6 +129,8 @@ Panel {
               if (!root.check) return "Confirm load"
               if (root.check.startupConfirmation === true)
                 return "Launch ‘" + String(root.check.group.name || "startup group") + "’?"
+              if (root.check.multiMonitor === true)
+                return "Replace these monitor workspaces?"
               return root.check.kind === "group"
                 ? "Replace these workspaces?" : "Replace this workspace?"
             }
@@ -146,6 +148,9 @@ Panel {
               if (!root.check) return ""
               if (root.check.startupConfirmation === true)
                 return "This group is configured to launch at startup. Continue for this session?"
+              if (root.check.multiMonitor === true)
+                return "The preset targets the current workspace on "
+                  + String((root.check.targets || []).length) + " monitor(s)."
               if (root.check.kind === "group")
                 return "The group targets " + String((root.check.targets || []).length)
                   + " workspace(s)."
@@ -178,7 +183,7 @@ Panel {
                 width: parent.width
                 text: {
                   if (!root.check) return ""
-                  var count = root.check.kind === "group"
+                  var count = root.check.kind === "group" || root.check.multiMonitor === true
                     ? Number(root.check.windowCountToClose || 0)
                     : (root.check.windowsToClose || []).length
                   return count + " existing window(s) will receive normal close requests."
@@ -195,8 +200,24 @@ Panel {
                 width: parent.width
                 visible: root.check && root.check.kind !== "group"
                   && (root.check.conflicts || []).length > 0
+                  && root.check.multiMonitor !== true
                 text: root.check
                   ? String((root.check.conflicts || []).length)
+                    + " matching window(s) also exist on other workspaces."
+                  : ""
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+                wrapMode: Text.Wrap
+              }
+
+              Text {
+                textFormat: Text.PlainText
+                width: parent.width
+                visible: root.check && root.check.multiMonitor === true
+                  && Number(root.check.conflictCount || 0) > 0
+                text: root.check
+                  ? String(Number(root.check.conflictCount || 0))
                     + " matching window(s) also exist on other workspaces."
                   : ""
                 color: root.foreground
@@ -235,7 +256,9 @@ Panel {
               label: "Move existing"
               primary: true
               visible: root.check && root.check.kind !== "group"
-                && (root.check.conflicts || []).length > 0
+                && (root.check.multiMonitor === true
+                  ? Number(root.check.conflictCount || 0) > 0
+                  : (root.check.conflicts || []).length > 0)
               onClicked: root.confirm("move-existing")
             }
           }

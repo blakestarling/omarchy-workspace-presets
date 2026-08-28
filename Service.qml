@@ -150,13 +150,17 @@ Item {
     if (desktopEntries.length === 0) enqueue(["desktop-entries"], "desktop-entries")
   }
 
-  function capture(name) {
-    enqueue(["capture", "--name", String(name)], "capture", true)
+  function capture(name, multiMonitor) {
+    var args = ["capture", "--name", String(name)]
+    if (multiMonitor === true) args.push("--multi-monitor")
+    enqueue(args, "capture", true)
   }
 
-  function overwrite(presetId, name) {
+  function overwrite(presetId, name, multiMonitor) {
+    var args = ["capture", "--name", String(name), "--overwrite-id", String(presetId)]
+    if (multiMonitor === true) args.push("--multi-monitor")
     enqueue(
-      ["capture", "--name", String(name), "--overwrite-id", String(presetId)],
+      args,
       "overwrite",
       true
     )
@@ -230,6 +234,21 @@ Item {
       enqueue(
         ["group-load", "--id", String(check.group.id), "--expected-token", String(check.token), "--confirmed"],
         "group-load", true
+      )
+      loadStartedSerial += 1
+      return
+    }
+    if (check.multiMonitor === true && Array.isArray(check.workspaceIds)) {
+      enqueue(
+        [
+          "load", "--id", String(check.preset.id),
+          "--expected-workspace-ids", check.workspaceIds.join(","),
+          "--expected-token", String(check.token),
+          "--conflict-policy", String(conflictPolicy),
+          "--confirmed"
+        ],
+        "load",
+        true
       )
       loadStartedSerial += 1
       return

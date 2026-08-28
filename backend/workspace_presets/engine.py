@@ -141,9 +141,111 @@ class WorkspaceEngine:
         slot = int(workspace_slot)
         return 10 if slot == 0 else slot
 
-    def capture(self, name: str, *, overwrite_id: str | None = None) -> dict:
-        self.progress("capture", "Reading the active workspace", None)
-        context = self.hypr.active_context()
+    def capture(
+        self, name: str, *, overwrite_id: str | None = None, multi_monitor: bool = False
+    ) -> dict:
+        self.progress(
+            "capture",
+            "Reading the active workspaces" if multi_monitor else "Reading the active workspace",
+            None,
+        )
+        entries = scan_desktop_entries()
+        panel_plugins = scan_omarchy_panel_plugins()
+        # Read the process table once for the whole capture rather than once
+        # per terminal window.
+        process_table = scan_process_table()
+        contexts = self.hypr.active_contexts() if multi_monitor else [self.hypr.active_context()]
+        captured: list[dict] = []
+        for context in contexts:
+            workspace = context["workspace"]
+            clients = self.hypr.workspace_clients(int(workspace["id"]))
+            if not clients:
+                if multi_monitor:
+                    # A monitor showing an empty workspace has nothing to save
+                    # and nothing to restore; loading such a preset simply
+                    # leaves that monitor's active workspace alone.
+                    self.progress(
+                        "capture",
+                        f"Skipping monitor {safe_label(context['monitor'].get('name', 'unknown'))}: no windows on its active workspace",
+                        None,
+                    )
+                    continue
+                raise ValidationError("The active workspace has no application windows")
+            captured.append(
+                self._capture_workspace(context, clients, entries, panel_plugins, process_table)
+            )
+        if not captured:
+            raise ValidationError(
+                "No monitor has application windows on its active workspace"
+            )
+        focused = captured[0]
+        hyprland_version = self.hypr.version().get("version", "")
+        if multi_monitor:
+            segments = []
+            windows: list[dict] = []
+            groups: list[dict] = []
+            for segment in captured:
+                segments.append({
+                    "monitor": segment["monitor"],
+                    "workspaceName": segment["workspaceName"],
+                    "workarea": segment["workarea"],
+                    "layout": segment["layout"],
+                    "finalFocusSlotId": segment["finalFocusSlotId"],
+                })
+                for slot in segment["windows"]:
+                    windows.append({**slot, "segmentId": segment["monitor"]})
+                groups.extend(segment["groups"])
+            snapshot = {
+                "schemaVersion": 1,
+                "capturedAt": utc_now(),
+                "multiMonitor": True,
+                "source": {
+                    "monitor": focused["monitor"],
+                    "workarea": focused["workarea"],
+                    "hyprlandVersion": hyprland_version,
+                },
+                "segments": segments,
+                "windows": windows,
+                "groups": groups,
+                "finalFocusSlotId": focused["finalFocusSlotId"],
+            }
+        else:
+            segment = focused
+            snapshot = {
+                "schemaVersion": 1,
+                "capturedAt": utc_now(),
+                "source": {
+                    "workspaceName": segment["workspaceName"],
+                    "monitor": segment["monitor"],
+                    "workarea": segment["workarea"],
+                    "hyprlandVersion": hyprland_version,
+                },
+                "layout": segment["layout"],
+                "windows": segment["windows"],
+                "groups": segment["groups"],
+                "finalFocusSlotId": segment["finalFocusSlotId"],
+            }
+        if overwrite_id:
+            old = self.store.get(overwrite_id)
+            self._carry_launchers(old.get("snapshot", {}), snapshot)
+        saved = self.store.save_snapshot(name, snapshot, overwrite_id=overwrite_id)
+        summary = self.store.public_summary(saved)
+        self.progress(
+            "complete",
+            "Preset captured" if summary["loadable"] else "Preset saved; launcher setup is required",
+            summary,
+        )
+        return summary
+
+    def _capture_workspace(
+        self,
+        context: dict,
+        clients: list[dict],
+        entries: dict,
+        panel_plugins: dict,
+        process_table: list,
+    ) -> dict:
+        """Capture one monitor's active workspace into a segment."""
         workspace = context["workspace"]
         layout_name = str(workspace.get("tiledLayout", ""))
         if layout_name not in SUPPORTED_LAYOUTS:
@@ -151,15 +253,7 @@ class WorkspaceEngine:
                 f"Workspace layout {layout_name or 'unknown'!r} is not supported",
                 details={"supportedLayouts": list(SUPPORTED_LAYOUTS)},
             )
-        clients = self.hypr.workspace_clients(int(workspace["id"]))
-        if not clients:
-            raise ValidationError("The active workspace has no application windows")
         metadata = self.hypr.layout_metadata(clients)
-        entries = scan_desktop_entries()
-        panel_plugins = scan_omarchy_panel_plugins()
-        # Read the process table once for the whole workspace rather than once
-        # per terminal window.
-        process_table = scan_process_table()
         stable_to_slot: dict[str, str] = {
             str(client.get("stableId")): str(uuid.uuid4()) for client in clients
         }
@@ -285,31 +379,15 @@ class WorkspaceEngine:
             ]
         layout = capture_layout(layout_name, targets, metadata, options=options)
         focused = min(windows, key=lambda item: item["focusHistoryID"])
-        snapshot = {
-            "schemaVersion": 1,
-            "capturedAt": utc_now(),
-            "source": {
-                "workspaceName": str(workspace.get("name", workspace.get("id"))),
-                "monitor": str(context["monitor"].get("name", "")),
-                "workarea": context["workarea"],
-                "hyprlandVersion": self.hypr.version().get("version", ""),
-            },
+        return {
+            "monitor": str(context["monitor"].get("name", "")),
+            "workspaceName": str(workspace.get("name", workspace.get("id"))),
+            "workarea": context["workarea"],
             "layout": layout,
             "windows": windows,
             "groups": groups,
             "finalFocusSlotId": focused["id"],
         }
-        if overwrite_id:
-            old = self.store.get(overwrite_id)
-            self._carry_launchers(old.get("snapshot", {}), snapshot)
-        saved = self.store.save_snapshot(name, snapshot, overwrite_id=overwrite_id)
-        summary = self.store.public_summary(saved)
-        self.progress(
-            "complete",
-            "Preset captured" if summary["loadable"] else "Preset saved; launcher setup is required",
-            summary,
-        )
-        return summary
 
     @staticmethod
     def _capture_groups(metadata: dict[str, dict], stable_to_slot: dict[str, str]) -> tuple[list[dict], dict[str, str]]:
@@ -371,6 +449,9 @@ class WorkspaceEngine:
         if not isinstance(windows, list) or not windows:
             raise ValidationError(f"Preset {name!r} has no saved windows")
         slot_ids = {str(slot.get("id", "")) for slot in windows}
+        if snapshot.get("multiMonitor"):
+            WorkspaceEngine._validate_multi_monitor_integrity(name, snapshot)
+            return
         layout = snapshot.get("layout")
         if not isinstance(layout, dict) or layout.get("name") not in SUPPORTED_LAYOUTS:
             raise ValidationError(
@@ -400,6 +481,95 @@ class WorkspaceEngine:
                 details={"missingSlotIds": missing},
             )
 
+    @staticmethod
+    def _validate_multi_monitor_integrity(name: str, snapshot: dict) -> None:
+        """Check a multi-monitor snapshot's segments against its flat windows.
+
+        Each saved window carries the monitor segment it belongs to, and each
+        segment's layout, groups, and final focus may only reference windows
+        from that same segment.
+        """
+        segments = snapshot.get("segments")
+        if not isinstance(segments, list) or not segments:
+            raise ValidationError(f"Preset {name!r} has no saved monitor segments")
+        segment_ids: list[str] = []
+        for segment in segments:
+            if not isinstance(segment, dict):
+                raise ValidationError(f"Preset {name!r} has a damaged monitor segment")
+            monitor = str(segment.get("monitor", "")).strip()
+            if not monitor:
+                raise ValidationError(
+                    f"Preset {name!r} has a monitor segment without a monitor name"
+                )
+            if monitor in segment_ids:
+                raise ValidationError(f"Preset {name!r} saves monitor {monitor!r} twice")
+            segment_ids.append(monitor)
+            layout = segment.get("layout")
+            if not isinstance(layout, dict) or layout.get("name") not in SUPPORTED_LAYOUTS:
+                raise ValidationError(
+                    f"Preset {name!r} was saved with an unsupported layout on monitor {monitor!r}",
+                    details={"supportedLayouts": list(SUPPORTED_LAYOUTS)},
+                )
+            try:
+                segment_window_ids = set(target_order(layout))
+            except (KeyError, TypeError, ValueError, ValidationError) as exc:
+                raise ValidationError(
+                    f"Preset {name!r} has a damaged saved layout on monitor {monitor!r}: {exc}"
+                ) from exc
+            focus_id = segment.get("finalFocusSlotId")
+            if isinstance(focus_id, str) and focus_id:
+                segment_window_ids.add(focus_id)
+            slot_segments = {
+                str(slot.get("id", "")): str(slot.get("segmentId", ""))
+                for slot in snapshot["windows"]
+            }
+            missing = sorted(
+                slot_id
+                for slot_id in segment_window_ids
+                if slot_segments.get(slot_id) != monitor
+            )
+            if missing:
+                raise ValidationError(
+                    f"Preset {name!r} references {len(missing)} saved window(s) its monitor {monitor!r} segment does not contain",
+                    details={"missingSlotIds": missing},
+                )
+        slot_segments = {
+            str(slot.get("id", "")): str(slot.get("segmentId", ""))
+            for slot in snapshot["windows"]
+        }
+        unassigned = sorted(
+            slot_id for slot_id, segment_id in slot_segments.items()
+            if slot_id and segment_id not in segment_ids
+        )
+        if unassigned:
+            raise ValidationError(
+                f"Preset {name!r} has {len(unassigned)} saved window(s) without a valid monitor segment",
+                details={"slotIds": unassigned},
+            )
+        referenced: set[str] = set()
+        for group in snapshot.get("groups") or []:
+            if not isinstance(group, dict):
+                raise ValidationError(f"Preset {name!r} has a damaged window group")
+            members = [str(member) for member in group.get("members", []) if str(member)]
+            if not members:
+                raise ValidationError(f"Preset {name!r} has a window group without members")
+            owner = slot_segments.get(members[0])
+            for member in members[1:]:
+                if slot_segments.get(member) != owner:
+                    raise ValidationError(
+                        f"Preset {name!r} has a window group spanning two monitors"
+                    )
+            referenced.update(members)
+            referenced.add(str(group.get("representativeSlotId", "")))
+            referenced.add(str(group.get("activeSlotId", "")))
+        referenced.discard("")
+        missing = sorted(slot_id for slot_id in referenced if slot_id not in slot_segments)
+        if missing:
+            raise ValidationError(
+                f"Preset {name!r} references {len(missing)} saved window(s) it no longer contains",
+                details={"missingSlotIds": missing},
+            )
+
     def preflight(self, preset_id: str) -> dict:
         capability = self.capabilities()
         if not capability["ready"]:
@@ -411,6 +581,8 @@ class WorkspaceEngine:
                 f"Preset {preset['name']!r} has {summary['unresolvedCount']} unresolved launcher(s)"
             )
         self._validate_snapshot_integrity(preset)
+        if preset["snapshot"].get("multiMonitor"):
+            return self._preflight_multi(preset, summary)
         context = self.hypr.active_context()
         current = self.hypr.workspace_clients(int(context["workspace"]["id"]))
         entries = scan_desktop_entries()
@@ -483,6 +655,110 @@ class WorkspaceEngine:
             "token": token,
         }
 
+    def _preflight_multi(self, preset: dict, summary: dict) -> dict:
+        """Preflight a multi-monitor preset against every saved monitor.
+
+        Each target is the saved monitor's current active workspace, so the
+        restore lands on whatever workspace that monitor shows now rather
+        than the workspace that happened to be active when the preset was
+        captured.
+        """
+        snapshot = preset["snapshot"]
+        segments = snapshot["segments"]
+        monitors_by_name = {
+            str(item.get("name", "")): item for item in self.hypr.monitors()
+        }
+        missing = sorted(
+            str(segment.get("monitor", ""))
+            for segment in segments
+            if str(segment.get("monitor", "")) not in monitors_by_name
+        )
+        if missing:
+            raise ValidationError(
+                f"Preset {preset['name']!r} needs monitor(s) that are not connected: {', '.join(missing)}",
+                details={"missingMonitors": missing},
+            )
+        entries = scan_desktop_entries()
+        panel_plugins = scan_omarchy_panel_plugins()
+        for slot in snapshot["windows"]:
+            self._validate_runtime_launcher(slot["launcher"], entries, panel_plugins)
+        all_clients = self.hypr.clients()
+        targets = []
+        for segment in segments:
+            monitor_name = str(segment["monitor"])
+            monitor = monitors_by_name[monitor_name]
+            workspace = monitor.get("activeWorkspace") or {}
+            workspace_id = int(workspace.get("id", -999999))
+            if workspace_id < 1 or str(workspace.get("name", "")).startswith("special:"):
+                raise UnsupportedError("Special workspaces are not supported in version 1")
+            current = [
+                item for item in all_clients
+                if item.get("mapped", True)
+                and int(item.get("workspace", {}).get("id", -999999)) == workspace_id
+            ]
+            other_clients = [
+                item for item in all_clients
+                if int(item.get("workspace", {}).get("id", -999999)) != workspace_id
+            ]
+            conflicts = []
+            seen_addresses: set[str] = set()
+            for slot in snapshot["windows"]:
+                if str(slot.get("segmentId", "")) != monitor_name:
+                    continue
+                matches = sorted(
+                    (
+                        (window_match_score(item, slot["match"]), item)
+                        for item in other_clients
+                        if str(item.get("address", "")) not in seen_addresses
+                    ),
+                    key=lambda item: item[0], reverse=True,
+                )
+                if matches and matches[0][0] >= 100:
+                    candidate = matches[0][1]
+                    seen_addresses.add(str(candidate.get("address", "")))
+                    conflicts.append({
+                        "slotId": slot["id"], "class": candidate.get("class", ""),
+                        "title": candidate.get("title", ""),
+                        "workspace": candidate.get("workspace", {}).get("name", ""),
+                        "stableId": str(candidate.get("stableId", "")),
+                    })
+            targets.append({
+                "monitor": monitor_name,
+                "workspace": {
+                    "id": workspace_id,
+                    "name": str(workspace.get("name", workspace_id)),
+                },
+                "windowsToClose": [
+                    {"stableId": str(item.get("stableId", "")), "class": item.get("class", ""), "title": item.get("title", "")}
+                    for item in current
+                ],
+                "conflicts": conflicts,
+            })
+        token_input = {
+            "presetId": preset["id"],
+            "preset": hashlib.sha256(
+                json.dumps(preset, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest(),
+            "targets": [
+                [item["workspace"]["id"], sorted(window["stableId"] for window in item["windowsToClose"])]
+                for item in targets
+            ],
+        }
+        token = hashlib.sha256(
+            json.dumps(token_input, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        return {
+            "kind": "multi",
+            "multiMonitor": True,
+            "preset": summary,
+            "targets": targets,
+            "workspaceIds": [item["workspace"]["id"] for item in targets],
+            "windowCountToClose": sum(len(item["windowsToClose"]) for item in targets),
+            "conflictCount": sum(len(item["conflicts"]) for item in targets),
+            "requiresConfirmation": any(item["windowsToClose"] for item in targets),
+            "token": token,
+        }
+
     def resolve_unresolved_launchers(self) -> dict:
         entries = scan_desktop_entries()
         panel_plugins = scan_omarchy_panel_plugins()
@@ -546,6 +822,10 @@ class WorkspaceEngine:
         ):
             preset = self.store.get(assignment["presetId"])
             self._validate_snapshot_integrity(preset)
+            if preset.get("snapshot", {}).get("multiMonitor"):
+                raise ValidationError(
+                    f"Preset {preset['name']!r} spans multiple monitors and cannot be assigned to a single group workspace"
+                )
             preset_fingerprints.append([
                 preset["id"],
                 hashlib.sha256(
@@ -786,14 +1066,27 @@ class WorkspaceEngine:
         self,
         preset_id: str,
         *,
-        expected_workspace_id: int,
+        expected_workspace_id: int = 0,
         expected_token: str,
         conflict_policy: str = "launch-new",
         close_timeout: float = 8.0,
         launch_timeout: float = 12.0,
+        expected_workspace_ids: list[int] | None = None,
     ) -> dict:
         if conflict_policy not in {"launch-new", "move-existing"}:
             raise ValidationError("Conflict policy must be launch-new or move-existing")
+        preset = self.store.get(preset_id)
+        if preset.get("snapshot", {}).get("multiMonitor"):
+            return self._load_multi(
+                preset,
+                expected_workspace_ids=expected_workspace_ids or [],
+                expected_token=expected_token,
+                conflict_policy=conflict_policy,
+                close_timeout=close_timeout,
+                launch_timeout=launch_timeout,
+            )
+        if int(expected_workspace_id) < 1:
+            raise ValidationError("Load requires the confirmed workspace id")
         preflight = self.preflight(preset_id)
         preflight_workspace_id = int(preflight["workspace"]["id"])
         if preflight_workspace_id != int(expected_workspace_id):
@@ -867,6 +1160,183 @@ class WorkspaceEngine:
             "windowCount": len(slot_windows),
         }
         self.store.record_preset_use(preset_id)
+        self.progress("complete", f"Loaded {preset['name']}", result)
+        return result
+
+    @staticmethod
+    def _segment_view(snapshot: dict, segment: dict, slots: list[dict]) -> dict:
+        """Present one monitor segment in the shape _finalize_snapshot expects."""
+        member_ids = {str(slot.get("id")) for slot in slots}
+        groups = [
+            group for group in snapshot.get("groups", [])
+            if group.get("members") and str(group["members"][0]) in member_ids
+        ]
+        return {
+            "windows": slots,
+            "groups": groups,
+            "layout": segment["layout"],
+            "source": {"workarea": segment.get("workarea", {})},
+            "finalFocusSlotId": segment.get("finalFocusSlotId", ""),
+        }
+
+    def _load_multi(
+        self,
+        preset: dict,
+        *,
+        expected_workspace_ids: list[int],
+        expected_token: str,
+        conflict_policy: str,
+        close_timeout: float,
+        launch_timeout: float,
+    ) -> dict:
+        check = self.preflight(preset["id"])
+        if not expected_workspace_ids:
+            raise ValidationError(
+                "Multi-monitor load requires the confirmed workspace ids"
+            )
+        if sorted(int(item) for item in expected_workspace_ids) != sorted(
+            int(item) for item in check["workspaceIds"]
+        ):
+            raise RestoreError(
+                "The active workspaces changed after load confirmation; nothing was closed",
+                details={
+                    "expectedWorkspaceIds": sorted(int(item) for item in expected_workspace_ids),
+                    "activeWorkspaceIds": [int(item) for item in check["workspaceIds"]],
+                },
+            )
+        if check["token"] != expected_token:
+            raise RestoreError(
+                "The preset or workspace windows changed after preflight; nothing was closed"
+            )
+        snapshot = preset["snapshot"]
+        original_workspace_id = int(self.hypr.active_workspace().get("id", 0))
+        active_window = getattr(self.hypr, "active_window", lambda: None)()
+        original_window_id = str((active_window or {}).get("stableId", ""))
+
+        def restore_focus() -> None:
+            if original_workspace_id >= 1:
+                self.hypr.focus_workspace(original_workspace_id)
+                if original_window_id:
+                    original_window = self.hypr.find_window(original_window_id)
+                    if original_window:
+                        self.hypr.focus(original_window)
+
+        targets = []
+        closing_ids: set[str] = set()
+        for index, target in enumerate(check["targets"]):
+            monitor_name = str(target["monitor"])
+            segment = next(
+                item for item in snapshot["segments"]
+                if str(item.get("monitor")) == monitor_name
+            )
+            slots = [
+                slot for slot in snapshot["windows"]
+                if str(slot.get("segmentId", "")) == monitor_name
+            ]
+            targets.append({
+                "index": index,
+                "monitor": monitor_name,
+                "segment": segment,
+                "slots": slots,
+                "workspaceId": int(target["workspace"]["id"]),
+                "workspaceName": str(target["workspace"]["name"]),
+                "conflicts": {item["slotId"]: item for item in target["conflicts"]},
+            })
+            closing_ids.update(str(item["stableId"]) for item in target["windowsToClose"])
+
+        target_ids = {item["workspaceId"] for item in targets}
+        self.progress(
+            "close",
+            f"Closing {len(closing_ids)} window(s) across {len(targets)} monitor workspace(s)",
+            None,
+        )
+        for stable_id in closing_ids:
+            window = self.hypr.find_window(stable_id)
+            if (
+                window
+                and int(window.get("workspace", {}).get("id", -999999)) in target_ids
+            ):
+                self.hypr.close(window)
+        remaining = self.hypr.wait_until_closed(closing_ids, close_timeout)
+        if remaining:
+            raise RestoreError(
+                "One or more applications did not close; restore was stopped without force-killing them",
+                details={"remainingStableIds": sorted(remaining)},
+            )
+
+        tasks = []
+        for target in targets:
+            self.hypr.set_workspace_layout(
+                target["workspaceName"], target["segment"]["layout"]
+            )
+            for slot in target["slots"]:
+                tasks.append({
+                    "key": slot["id"],
+                    "slot": slot,
+                    "workspaceId": target["workspaceId"],
+                    "conflict": target["conflicts"].get(slot["id"]),
+                })
+        self.progress(
+            "launch",
+            f"Opening {len(tasks)} window(s) across {len(targets)} monitor workspace(s)",
+            None,
+        )
+        try:
+            slot_windows = self._materialize_slots(
+                tasks,
+                conflict_policy=conflict_policy,
+                launch_timeout=launch_timeout,
+                preserve_workspace_id=original_workspace_id,
+                preserve_window_id=original_window_id,
+            )
+        except Exception:
+            restore_focus()
+            raise
+
+        results = []
+        finalize_failures: list[Exception] = []
+        try:
+            for finalize_index, target in enumerate(targets, start=1):
+                self.progress(
+                    "layout",
+                    f"Finalizing {preset['name']} on monitor {target['monitor']}",
+                    {"current": finalize_index, "total": len(targets)},
+                )
+                view = self._segment_view(snapshot, target["segment"], target["slots"])
+                segment_windows = {slot["id"]: slot_windows[slot["id"]] for slot in target["slots"]}
+                order = target_order(target["segment"]["layout"])
+                anchor = segment_windows[order[0]]
+                try:
+                    context = self._activate_workspace_for_layout(
+                        target["workspaceId"], anchor
+                    )
+                    self._finalize_snapshot(
+                        view, segment_windows, context, focus_ready=True
+                    )
+                except Exception as exc:
+                    # Every target launched before finalization began; one
+                    # failed monitor must not prevent the others from
+                    # rebuilding their saved layouts.
+                    self._restore_saved_floating_modes(view, segment_windows)
+                    finalize_failures.append(exc)
+                    continue
+                results.append({
+                    "monitor": target["monitor"],
+                    "workspace": target["workspaceName"],
+                    "windowCount": len(segment_windows),
+                })
+        finally:
+            restore_focus()
+        if finalize_failures:
+            raise finalize_failures[0]
+        result = {
+            "presetId": preset["id"],
+            "name": preset["name"],
+            "monitorCount": len(results),
+            "windowCount": len(slot_windows),
+            "results": results,
+        }
+        self.store.record_preset_use(preset["id"])
         self.progress("complete", f"Loaded {preset['name']}", result)
         return result
 
