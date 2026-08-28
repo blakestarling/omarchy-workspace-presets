@@ -104,6 +104,12 @@ Foreground programs are detected automatically in Foot, Alacritty, Kitty, Ghostt
 
 This detection deliberately does not infer commands from shell history. Idle shells restore as normal terminals, while pipelines, ambiguous process trees, SSH sessions, and tmux or zellij sessions fall back to the terminal's normal launcher instead of saving a misleading partial command. Captured commands recreate the program but cannot preserve unsaved in-memory application state. Overwrite presets captured by an older plugin version to replace their generic terminal launchers with the richer recipe.
 
+#### Multiple monitors
+
+Tick **Use multiple monitors** above **Save** to capture the current workspace of every connected monitor into one preset. Each saved window records the monitor segment it belongs to, and each segment keeps its own layout, groups, final focus, and floating geometry normalized against that monitor's work area. A monitor whose active workspace has no windows is skipped; if no monitor has windows, the capture fails.
+
+Loading a multi-monitor preset restores each segment onto the saved monitor's current active workspace. The confirmation panel lists every target, and one stale-guard token covers all of them: if a monitor disconnects or its active workspace changes between confirmation and load, nothing is closed and the load reports the mismatch. A saved monitor that is not connected at load time is refused with a clear error before anything changes. Multi-monitor presets cannot be assigned to preset groups, which target a single workspace per preset.
+
 ### Load
 
 1. Choose **Load** on a ready preset.

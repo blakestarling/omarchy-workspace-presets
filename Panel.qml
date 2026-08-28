@@ -25,6 +25,7 @@ Panel {
   property string presetSort: "recent"
   property string groupSort: "recent"
   property bool progressVisible: false
+  property bool captureMultiMonitors: false
   // Delegate instances are recreated when group data is refreshed or sorted.
   // Keep in-progress workspace edits outside the delegates so unrelated saves
   // cannot discard what the user has typed.
@@ -504,10 +505,20 @@ Panel {
                 fontFamily: root.fontFamily
                 enabled: root.presetService && newPresetName.text.trim() !== ""
                 onClicked: {
-                  root.presetService.capture(newPresetName.text.trim())
+                  root.presetService.capture(newPresetName.text.trim(), root.captureMultiMonitors)
                   newPresetName.text = ""
                 }
               }
+            }
+            Toggle {
+              width: parent.width
+              label: "Use multiple monitors"
+              description: "Capture every monitor's current workspace into one preset."
+              foreground: root.foreground
+              accent: Color.accent
+              fontFamily: root.fontFamily
+              checked: root.captureMultiMonitors
+              onClicked: root.captureMultiMonitors = !root.captureMultiMonitors
             }
           }
         }
@@ -629,7 +640,7 @@ Panel {
                 destructive: true
                 onClicked: {
                   if (root.confirmAction === "delete") root.presetService.deletePreset(root.confirmPreset.id)
-                  else root.presetService.overwrite(root.confirmPreset.id, root.confirmPreset.name)
+                  else root.presetService.overwrite(root.confirmPreset.id, root.confirmPreset.name, root.captureMultiMonitors)
                   root.confirmAction = ""
                   root.confirmPreset = null
                 }
@@ -759,7 +770,11 @@ Panel {
                   }
                   Text {
                     textFormat: Text.PlainText
-                    text: presetCard.modelData.windowCount + " window(s) · Used "
+                    text: presetCard.modelData.windowCount + " window(s)"
+                      + (presetCard.modelData.multiMonitor
+                        ? " · " + String(presetCard.modelData.monitorCount || 0) + " monitor(s)"
+                        : "")
+                      + " · Used "
                       + String(presetCard.modelData.useCount || 0) + " time(s)"
                       + (presetCard.modelData.lastUsedAt ? " · Last used " + presetCard.modelData.lastUsedAt : "")
                     color: Color.muted

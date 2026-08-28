@@ -224,5 +224,89 @@ class StableWorkareaTests(unittest.TestCase):
         )
 
 
+class MultiMonitorCliTests(unittest.TestCase):
+    def test_capture_forwards_the_multi_monitor_flag(self):
+        engine = Mock()
+        engine.capture.return_value = {"id": "preset"}
+        with (
+            patch("workspace_presets.cli.PresetStore"),
+            patch("workspace_presets.engine.WorkspaceEngine", return_value=engine),
+            redirect_stdout(io.StringIO()),
+        ):
+            self.assertEqual(cli.main(["capture", "--name", "Desk", "--multi-monitor"]), 0)
+        engine.capture.assert_called_once_with(
+            "Desk", overwrite_id=None, multi_monitor=True
+        )
+
+    def test_capture_defaults_to_single_monitor(self):
+        engine = Mock()
+        engine.capture.return_value = {"id": "preset"}
+        with (
+            patch("workspace_presets.cli.PresetStore"),
+            patch("workspace_presets.engine.WorkspaceEngine", return_value=engine),
+            redirect_stdout(io.StringIO()),
+        ):
+            self.assertEqual(cli.main(["capture", "--name", "Desk"]), 0)
+        engine.capture.assert_called_once_with(
+            "Desk", overwrite_id=None, multi_monitor=False
+        )
+
+    def test_load_forwards_confirmed_multi_monitor_workspaces(self):
+        engine = Mock()
+        engine.load.return_value = {"monitorCount": 2}
+        with (
+            patch("workspace_presets.cli.PresetStore"),
+            patch("workspace_presets.engine.WorkspaceEngine", return_value=engine),
+            redirect_stdout(io.StringIO()),
+        ):
+            self.assertEqual(
+                cli.main([
+                    "load", "--id", "preset",
+                    "--expected-workspace-ids", "1,5",
+                    "--expected-token", "token",
+                    "--confirmed",
+                ]),
+                0,
+            )
+        engine.load.assert_called_once_with(
+            "preset",
+            expected_workspace_id=0,
+            expected_workspace_ids=[1, 5],
+            expected_token="token",
+            conflict_policy="launch-new",
+            close_timeout=8.0,
+            launch_timeout=12.0,
+        )
+
+    def test_load_without_confirmed_workspaces_is_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = PresetStore(Path(directory) / "presets.json")
+            store.save_snapshot(
+                "Single",
+                {
+                    "layout": {"name": "monocle"},
+                    "windows": [{
+                        "id": "slot-1",
+                        "match": {"class": "foot", "title": "Terminal"},
+                        "launcher": {"kind": "desktop", "desktopId": "foot.desktop"},
+                    }],
+                },
+            )
+            output = io.StringIO()
+            with (
+                patch("workspace_presets.cli.PresetStore", return_value=store),
+                redirect_stdout(output),
+            ):
+                code = cli.main([
+                    "load", "--id", store.list_summaries()[0]["id"],
+                    "--expected-token", "token",
+                    "--confirmed",
+                ])
+            self.assertEqual(code, 2)
+            event = json.loads(output.getvalue())
+            self.assertEqual(event["type"], "error")
+            self.assertIn("workspace id", event["message"])
+
+
 if __name__ == "__main__":
     unittest.main()

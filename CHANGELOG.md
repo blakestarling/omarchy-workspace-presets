@@ -2,6 +2,13 @@
 
 All notable changes to Workspace Presets are documented here.
 
+## Unreleased
+
+Multi-monitor capture.
+
+- Save the current workspace on every connected monitor into one preset with the new **Use multiple monitors** toggle in the panel, or `capture --multi-monitor`. Each saved window records the monitor segment it belongs to, and each segment keeps its own layout, window groups, final focus, and normalized geometry against that monitor's work area.
+- Loading a multi-monitor preset restores each segment onto the saved monitor's current active workspace, so a preset captured on a mixed monitor setup rebuilds both sides of the desktop. Validation, confirmation, and the stale-guard token cover every target workspace; missing monitors are refused with a clear error before anything is closed, and a monitor whose active workspace is empty at capture time is simply skipped. Multi-monitor presets cannot be assigned to preset groups.
+
 ## 1.9.1 - 2026-08-27
 
 Hardening for the paths that read files out of user-writable directories, and three restore-behaviour fixes for applications starting cold.

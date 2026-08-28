@@ -53,6 +53,11 @@ def parser() -> argparse.ArgumentParser:
     capture = commands.add_parser("capture")
     capture.add_argument("--name", required=True)
     capture.add_argument("--overwrite-id")
+    capture.add_argument(
+        "--multi-monitor",
+        action="store_true",
+        help="Capture every connected monitor's active workspace into one preset",
+    )
 
     rename = commands.add_parser("rename")
     rename.add_argument("--id", required=True)
@@ -117,7 +122,11 @@ def parser() -> argparse.ArgumentParser:
 
     load = commands.add_parser("load")
     load.add_argument("--id", required=True)
-    load.add_argument("--expected-workspace-id", required=True, type=int)
+    load.add_argument("--expected-workspace-id", type=int)
+    load.add_argument(
+        "--expected-workspace-ids",
+        help="Comma-separated confirmed workspace ids for a multi-monitor preset",
+    )
     load.add_argument("--expected-token", required=True)
     load.add_argument(
         "--conflict-policy",
@@ -246,7 +255,9 @@ def dispatch(args: argparse.Namespace, store: PresetStore, engine: Any) -> objec
     elif args.command == "details":
         result = store.get(args.id)
     elif args.command == "capture":
-        result = engine.capture(args.name, overwrite_id=args.overwrite_id)
+        result = engine.capture(
+            args.name, overwrite_id=args.overwrite_id, multi_monitor=args.multi_monitor
+        )
     elif args.command == "rename":
         result = store.public_summary(store.rename(args.id, args.name))
     elif args.command == "delete":
@@ -375,9 +386,15 @@ def dispatch(args: argparse.Namespace, store: PresetStore, engine: Any) -> objec
     elif args.command == "load":
         if not args.confirmed:
             raise WorkspacePresetsError("Refusing to replace a workspace without --confirmed")
+        expected_ids = None
+        if args.expected_workspace_ids:
+            expected_ids = [
+                int(item) for item in args.expected_workspace_ids.split(",") if item.strip()
+            ]
         result = engine.load(
             args.id,
-            expected_workspace_id=args.expected_workspace_id,
+            expected_workspace_id=args.expected_workspace_id or 0,
+            expected_workspace_ids=expected_ids,
             expected_token=args.expected_token,
             conflict_policy=args.conflict_policy,
             close_timeout=max(1.0, args.close_timeout),

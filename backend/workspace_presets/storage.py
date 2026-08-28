@@ -336,6 +336,23 @@ class PresetStore:
             if slot_id in seen_slots:
                 raise ValidationError("Saved window ids must be unique")
             seen_slots.add(slot_id)
+        if snapshot.get("multiMonitor"):
+            segments = snapshot.get("segments")
+            if not isinstance(segments, list) or not segments:
+                raise ValidationError("Multi-monitor presets must have a segments array")
+            segment_names: set[str] = set()
+            for segment in segments:
+                if not isinstance(segment, dict) or not str(segment.get("monitor", "")).strip():
+                    raise ValidationError("Every monitor segment must name its monitor")
+                monitor = str(segment["monitor"])
+                if monitor in segment_names:
+                    raise ValidationError("Monitor segments must name distinct monitors")
+                segment_names.add(monitor)
+            for slot in windows:
+                if str(slot.get("segmentId", "")) not in segment_names:
+                    raise ValidationError(
+                        "Every saved window in a multi-monitor preset must name a saved monitor segment"
+                    )
 
     @staticmethod
     def _validate_usage(item: dict, label: str) -> None:
@@ -358,6 +375,7 @@ class PresetStore:
         snapshot = preset.get("snapshot", {})
         windows = snapshot.get("windows", [])
         unresolved = sum(1 for slot in windows if not slot.get("launcher"))
+        multi_monitor = bool(snapshot.get("multiMonitor"))
         return {
             "id": preset["id"],
             "name": preset["name"],
@@ -365,7 +383,14 @@ class PresetStore:
             "updatedAt": preset.get("updatedAt", ""),
             "lastUsedAt": preset.get("lastUsedAt", ""),
             "useCount": preset.get("useCount", 0),
-            "layout": snapshot.get("layout", {}).get("name", "unknown"),
+            "layout": (
+                "multi-monitor" if multi_monitor
+                else snapshot.get("layout", {}).get("name", "unknown")
+            ),
+            "multiMonitor": multi_monitor,
+            "monitorCount": (
+                len(snapshot.get("segments", [])) if multi_monitor else 1
+            ),
             "windowCount": len(windows),
             "unresolvedCount": unresolved,
             "loadable": unresolved == 0 and bool(windows),

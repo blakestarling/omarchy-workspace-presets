@@ -217,6 +217,12 @@ class Hyprland:
             raise HyprlandError("hyprctl monitors returned an unexpected value")
         return value
 
+    def workspaces(self) -> list[dict]:
+        value = self.query("workspaces")
+        if not isinstance(value, list):
+            raise HyprlandError("hyprctl workspaces returned an unexpected value")
+        return value
+
     def version(self) -> dict:
         value = self.query("version")
         return value if isinstance(value, dict) else {}
@@ -276,6 +282,10 @@ class Hyprland:
             monitor = next((item for item in monitors if item.get("focused")), None)
         if monitor is None:
             raise HyprlandError("Cannot resolve the active workspace monitor")
+        return self.monitor_context(monitor, workspace)
+
+    def monitor_context(self, monitor: dict, workspace: dict) -> dict:
+        """Build a capture context for one monitor and one of its workspaces."""
         reserved = monitor.get("reserved", [0, 0, 0, 0])
         left, top, right, bottom = [float(value) for value in reserved]
         scale = max(float(monitor.get("scale", 1)), 0.001)
@@ -294,6 +304,39 @@ class Hyprland:
             "monitor": str(monitor.get("name", "")),
         }
         return {"workspace": workspace, "monitor": monitor, "workarea": workarea}
+
+    def active_contexts(self) -> list[dict]:
+        """Build a capture context for every connected monitor.
+
+        Each monitor reports its own active workspace, so a multi-monitor
+        capture reads one context per monitor. The focused monitor is listed
+        first so preset summaries and final focus follow it.
+        """
+        monitors = self.monitors()
+        # A monitor's activeWorkspace entry only carries {id, name}; the
+        # compositor's full workspace record - tiledLayout in particular - is
+        # published through the workspaces query, so merge the two before
+        # building a capture context.
+        workspaces_by_id = {
+            int(item.get("id", -999999)): item
+            for item in self.workspaces()
+            if isinstance(item, dict) and "id" in item
+        }
+        contexts = []
+        for monitor in monitors:
+            workspace = dict(monitor.get("activeWorkspace") or {})
+            if not isinstance(workspace, dict) or "id" not in workspace:
+                raise HyprlandError(
+                    f"Monitor {str(monitor.get('name', 'unknown'))!r} did not report an active workspace"
+                )
+            workspace.update(workspaces_by_id.get(int(workspace["id"]), {}))
+            if int(workspace.get("id", 0)) < 0 or str(workspace.get("name", "")).startswith("special:"):
+                raise UnsupportedError("Special workspaces are not supported in version 1")
+            contexts.append(self.monitor_context(monitor, workspace))
+        if not contexts:
+            raise HyprlandError("No connected Hyprland monitors")
+        contexts.sort(key=lambda item: (not bool(item["monitor"].get("focused")), str(item["monitor"].get("name", ""))))
+        return contexts
 
     def workspace_clients(self, workspace_id: int) -> list[dict]:
         return [
