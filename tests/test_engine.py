@@ -1059,7 +1059,19 @@ class MultiMonitorHyprland(FakeHyprland):
         return [self._context(item) for item in ordered]
 
     def monitors(self):
-        return [self._context(item)["monitor"] for item in self.monitors_def]
+        # Mirror the real compositor: a monitor's activeWorkspace entry only
+        # carries {id, name}, never tiledLayout.
+        result = []
+        for item in self.monitors_def:
+            monitor = dict(self._context(item)["monitor"])
+            monitor["activeWorkspace"] = {
+                "id": item["workspaceId"], "name": str(item["workspaceId"]),
+            }
+            result.append(monitor)
+        return result
+
+    def workspaces(self):
+        return [self._context(item)["workspace"] for item in self.monitors_def]
 
     def focus_workspace(self, workspace):
         workspace_id = int(workspace)

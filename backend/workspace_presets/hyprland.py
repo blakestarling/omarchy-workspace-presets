@@ -217,6 +217,12 @@ class Hyprland:
             raise HyprlandError("hyprctl monitors returned an unexpected value")
         return value
 
+    def workspaces(self) -> list[dict]:
+        value = self.query("workspaces")
+        if not isinstance(value, list):
+            raise HyprlandError("hyprctl workspaces returned an unexpected value")
+        return value
+
     def version(self) -> dict:
         value = self.query("version")
         return value if isinstance(value, dict) else {}
@@ -307,13 +313,23 @@ class Hyprland:
         first so preset summaries and final focus follow it.
         """
         monitors = self.monitors()
+        # A monitor's activeWorkspace entry only carries {id, name}; the
+        # compositor's full workspace record - tiledLayout in particular - is
+        # published through the workspaces query, so merge the two before
+        # building a capture context.
+        workspaces_by_id = {
+            int(item.get("id", -999999)): item
+            for item in self.workspaces()
+            if isinstance(item, dict) and "id" in item
+        }
         contexts = []
         for monitor in monitors:
-            workspace = monitor.get("activeWorkspace")
+            workspace = dict(monitor.get("activeWorkspace") or {})
             if not isinstance(workspace, dict) or "id" not in workspace:
                 raise HyprlandError(
                     f"Monitor {str(monitor.get('name', 'unknown'))!r} did not report an active workspace"
                 )
+            workspace.update(workspaces_by_id.get(int(workspace["id"]), {}))
             if int(workspace.get("id", 0)) < 0 or str(workspace.get("name", "")).startswith("special:"):
                 raise UnsupportedError("Special workspaces are not supported in version 1")
             contexts.append(self.monitor_context(monitor, workspace))
